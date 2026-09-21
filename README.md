@@ -176,9 +176,15 @@ alerts.
 ## Deploying to Vercel
 
 1. Push this repo to GitHub and import it into Vercel.
-2. Add the **Neon** integration (Storage tab) to provision Postgres and set
-   `DATABASE_URL` automatically — or paste your own Neon connection string as
-   an environment variable.
+2. Add the **Neon** integration (Storage tab) to provision Postgres. Note:
+   Vercel's native Neon integration names its connection string variable
+   `<project-name>_DATABASE_URL` (e.g. `partnergoals_DATABASE_URL`), not
+   plain `DATABASE_URL` — and marks it read-only in the dashboard since it's
+   synced from the connected database. The app checks for that prefixed name
+   first and falls back to plain `DATABASE_URL` (see `src/db/index.ts`), so
+   either works; you don't need to manually reconcile them. If you'd rather
+   set your own Neon connection string instead of using the integration,
+   just add a plain `DATABASE_URL` environment variable yourself.
 3. Set `APP_PASSWORD` as an environment variable in the Vercel project
    settings.
 4. (Optional, for gift photo uploads) Add the **Blob** integration (Storage
