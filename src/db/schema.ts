@@ -38,9 +38,17 @@ export const storeCategoryEnum = pgEnum("store_category", [
   "other",
 ]);
 
-// More types land here once later passes (e.g. restaurant availability) are scoped.
 export const notificationTypeEnum = pgEnum("notification_type", [
   "key_date_reminder",
+  "restaurant_surface",
+  "restaurant_similar",
+  "restaurant_opening",
+]);
+
+export const restaurantPlatformEnum = pgEnum("restaurant_platform", [
+  "opentable",
+  "resy",
+  "other",
 ]);
 
 export const partner = pgTable("partner", {
@@ -105,6 +113,45 @@ export const storeBrand = pgTable("store_brand", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const favoriteRestaurant = pgTable("favorite_restaurant", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  cuisine: text("cuisine"),
+  neighborhood: text("neighborhood"),
+  platform: restaurantPlatformEnum("platform").notNull().default("other"),
+  // Either a bare platform ID/slug (e.g. an OpenTable "rid") or a full URL to
+  // the restaurant's page on that platform — a full URL is always safest,
+  // especially for Resy where the venue URL isn't a single simple ID.
+  platformVenueId: text("platform_venue_id"),
+  lastVisited: date("last_visited"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Rolling snapshot of nearby places seen via Google Places Nearby Search,
+// used to diff month over month for the restaurant_opening notification.
+// "New" just means "not in this table yet" — since the scan only runs
+// monthly (gated by job_run), that's equivalent to "new since last month".
+export const placesSnapshot = pgTable("places_snapshot", {
+  id: serial("id").primaryKey(),
+  placeId: text("place_id").notNull().unique(),
+  name: text("name").notNull(),
+  cuisine: text("cuisine").notNull(),
+  city: text("city"),
+  neighborhood: text("neighborhood"),
+  firstSeen: timestamp("first_seen").defaultNow().notNull(),
+  lastSeen: timestamp("last_seen").defaultNow().notNull(),
+});
+
+// Tracks the last run of named background jobs that shouldn't run on every
+// daily cron tick (e.g. the monthly new-restaurant scan), so cadence is
+// self-healing across missed/delayed cron invocations instead of relying on
+// an exact day-of-month match.
+export const jobRun = pgTable("job_run", {
+  name: text("name").primaryKey(),
+  ranAt: timestamp("ran_at").notNull(),
+});
+
 export const notification = pgTable(
   "notification",
   {
@@ -113,6 +160,10 @@ export const notification = pgTable(
     keyDateId: integer("key_date_id").references(() => keyDate.id, {
       onDelete: "cascade",
     }),
+    favoriteRestaurantId: integer("favorite_restaurant_id").references(
+      () => favoriteRestaurant.id,
+      { onDelete: "cascade" }
+    ),
     message: text("message").notNull(),
     link: text("link"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -121,6 +172,7 @@ export const notification = pgTable(
   },
   (table) => [
     index("notification_key_date_id_idx").on(table.keyDateId),
+    index("notification_favorite_restaurant_id_idx").on(table.favoriteRestaurantId),
     index("notification_dismissed_idx").on(table.dismissed),
   ]
 );

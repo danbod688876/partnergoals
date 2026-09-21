@@ -23,6 +23,8 @@ password gate.
   gift-planning framing
 - `/gifts` — a log of gifts given, newest first, with an optional photo
 - `/activities` — a log of things you've done together
+- `/restaurants` — favorite restaurants; each has a detail page with a
+  reservation link/embed for its booking platform
 - `/stores` — an allowlist of trusted stores/brands
 
 ## Key-date reminders
@@ -54,6 +56,53 @@ curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/dail
 If `CRON_SECRET` isn't set, the route runs unauthenticated — fine for local
 dev, but set it before deploying so the endpoint isn't open to anyone who
 finds the URL.
+
+## Restaurant discovery
+
+`/restaurants` holds your favorite spots. Each one can carry a booking
+platform (OpenTable, Resy, or other) and a venue ID or URL — paste either the
+platform's own ID/slug for that restaurant, or (safest, especially for Resy)
+the full URL to its page on that platform. The detail page
+(`/restaurants/[id]`) shows a reservation option built from that:
+
+- **OpenTable**, bare ID: an embedded iframe of OpenTable's own reservation
+  widget, plus a plain "Open on OpenTable" link as a guaranteed fallback.
+- **Resy**, bare ID: an attempt at Resy's public button-widget embed, plus a
+  fallback link to search for the restaurant on resy.com.
+- **Any platform, full URL pasted**: just a direct "Reserve" link to that URL
+  — the most reliable option, since it can't depend on embed syntax at all.
+- **No venue ID, or platform "other"**: a plain message pointing you to call
+  or check the restaurant's own site.
+
+Nothing here ever books anything automatically — every path either embeds
+the platform's own official widget (so booking happens in their iframe, with
+their own login/payment flow) or link out to their page. No API keys,
+scraping, or stored credentials for either platform. (The exact widget embed
+syntax for OpenTable/Resy couldn't be verified against their live docs while
+building this — if a widget doesn't render, the fallback link next to it
+always works, and it's worth checking their current widget docs to update
+`src/components/BookingWidget.tsx` if needed.)
+
+The same daily cron job also:
+
+- **Surfaces favorites periodically** (roughly weekly per restaurant) with a
+  `restaurant_surface` notification linking to that restaurant's page — a
+  reminder to go check availability yourself, not a live signal (there's no
+  read access to OpenTable/Resy's actual availability — scraping either
+  platform would violate their Terms of Service, so this app doesn't attempt
+  it).
+- **Bundles 2-3 similar nearby restaurants** (`restaurant_similar`) alongside
+  each surfaced favorite, via the Google Places API (Nearby Search + Place
+  Details), with rating, review count, and distance.
+- **Flags new nearby openings** (`restaurant_opening`) once a month, by
+  diffing a rolling snapshot of nearby Places results (filtered to cuisines
+  you've favorited or listed as a food preference) against what's been seen
+  before.
+
+All three need `GOOGLE_PLACES_API_KEY` set and your partner's `city` filled
+in on `/profile` (used to geocode a search origin). Without a key, favorite
+check-ins still fire — just without the similar-restaurant bundle or opening
+alerts.
 
 ## Local setup
 
@@ -112,7 +161,9 @@ finds the URL.
    `/api/cron/daily`, so the route only runs for real Cron invocations (or
    you, with the same value). The cron schedule itself lives in
    `vercel.json` and needs no extra setup.
-6. After the first deploy, run the migration against your production
+6. (Optional, for restaurant discovery) Set `GOOGLE_PLACES_API_KEY` — a
+   Google Cloud API key with the Places API and Geocoding API enabled.
+7. After the first deploy, run the migration against your production
    database once (e.g. `DATABASE_URL=... npm run db:migrate` from your
    machine, or via a Vercel deploy hook) and seed it:
 
@@ -125,9 +176,10 @@ That's it — no other configuration needed.
 
 ## Notes
 
-- Core CRUD (profile, preferences, key dates, gift log, activity log, store
-  allowlist) plus key-date reminders and an in-app notification feed. No
-  email/push notifications, external API integrations, trip planning, or
-  booking flows yet — that's future work.
+- Core CRUD (profile, preferences, key dates, gift log, activity log,
+  restaurant favorites, store allowlist), key-date reminders, and restaurant
+  discovery, all feeding one in-app notification center. No email/push
+  notifications, and no automated booking — every reservation path is either
+  an official embedded widget or a link out to the platform itself.
 - Auth is a single shared password (`APP_PASSWORD`), checked against a signed
   session cookie. There are no user accounts.

@@ -15,6 +15,13 @@
       "when": 1790014526014,
       "tag": "0001_good_scarecrow",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790015252846,
+      "tag": "0002_cheerful_the_stranger",
+      "breakpoints": true
     }
   ]
 }

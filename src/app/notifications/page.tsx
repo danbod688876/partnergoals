@@ -5,6 +5,20 @@ import { notification } from "@/db/schema";
 import { Card, EmptyState, PageHeader, ghostLinkClass } from "@/components/ui";
 import { dismissNotification, snoozeNotification, unsnoozeNotification } from "./actions";
 
+const TYPE_LABELS: Record<string, string> = {
+  key_date_reminder: "Key date",
+  restaurant_surface: "Restaurant",
+  restaurant_similar: "Backup idea",
+  restaurant_opening: "New opening",
+};
+
+const TYPE_STYLES: Record<string, string> = {
+  key_date_reminder: "bg-clay-100 text-clay-700",
+  restaurant_surface: "bg-sage-100 text-sage-700",
+  restaurant_similar: "bg-sage-100 text-sage-700",
+  restaurant_opening: "bg-ink-100 text-ink-600",
+};
+
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
   if (seconds < 60) return "just now";
@@ -52,6 +66,11 @@ export default async function NotificationsPage() {
             <Card key={n.id} className="py-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1">
+                  <span
+                    className={`mb-1.5 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${TYPE_STYLES[n.type] ?? "bg-ink-100 text-ink-600"}`}
+                  >
+                    {TYPE_LABELS[n.type] ?? n.type}
+                  </span>
                   <p className="text-ink-800">{n.message}</p>
                   <div className="mt-1 flex items-center gap-3 text-xs text-ink-400">
                     <span>{timeAgo(new Date(n.createdAt))}</span>

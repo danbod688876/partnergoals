@@ -11,6 +11,7 @@ const LINKS = [
   { href: "/dates", label: "Key Dates" },
   { href: "/gifts", label: "Gift Log" },
   { href: "/activities", label: "Activities" },
+  { href: "/restaurants", label: "Restaurants" },
   { href: "/stores", label: "Stores" },
 ];
 
