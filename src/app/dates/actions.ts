@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { keyDate, recurrenceEnum } from "@/db/schema";
+import { checkSingleKeyDate } from "@/lib/notifications";
 
 type Recurrence = (typeof recurrenceEnum.enumValues)[number];
 
@@ -25,13 +26,44 @@ export async function saveKeyDate(formData: FormData) {
 
   const values = { label, date, recurrence, sensitive, leadTimeDays };
 
+  let row: typeof keyDate.$inferSelect;
   if (id) {
-    await db.update(keyDate).set(values).where(eq(keyDate.id, Number(id)));
+    [row] = await db.update(keyDate).set(values).where(eq(keyDate.id, Number(id))).returning();
   } else {
-    await db.insert(keyDate).values(values);
+    [row] = await db.insert(keyDate).values(values).returning();
   }
 
+  // Immediate check (item 7a): if this date is already inside its lead-time
+  // window, don't make it wait for the next daily cron run.
+  await checkSingleKeyDate(row);
+
   revalidatePath("/dates");
+  revalidatePath("/notifications");
+}
+
+// Birthday/Anniversary one-tap quick-add: just a date, everything else
+// defaults (label = the option name, annual recurrence, 14+7 day reminders).
+export async function quickAddKeyDate(formData: FormData) {
+  const label = str(formData, "label");
+  const date = str(formData, "date");
+  if (!label || !date) return;
+
+  const [row] = await db
+    .insert(keyDate)
+    .values({
+      label,
+      date,
+      recurrence: "annual",
+      sensitive: false,
+      leadTimeDays: 14,
+      secondaryLeadTimeDays: 7,
+    })
+    .returning();
+
+  await checkSingleKeyDate(row);
+
+  revalidatePath("/dates");
+  revalidatePath("/notifications");
 }
 
 export async function deleteKeyDate(formData: FormData) {

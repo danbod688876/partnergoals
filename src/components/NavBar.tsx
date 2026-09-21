@@ -6,6 +6,7 @@ import { useState } from "react";
 
 const LINKS = [
   { href: "/", label: "Notifications", exact: true },
+  { href: "/upcoming", label: "Upcoming" },
   { href: "/profile", label: "Profile" },
   { href: "/preferences", label: "Preferences" },
   { href: "/dates", label: "Key Dates" },

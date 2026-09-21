@@ -44,6 +44,7 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "restaurant_similar",
   "restaurant_opening",
   "profile_gap",
+  "cadence_nudge",
 ]);
 
 export const restaurantPlatformEnum = pgEnum("restaurant_platform", [
@@ -69,6 +70,9 @@ export const partner = pgTable("partner", {
   shoeSize: text("shoe_size"),
   ringSize: text("ring_size"),
   dietaryNotes: text("dietary_notes"),
+  // How many days without an activity/date together before the cadence-nudge
+  // scan suggests something — configurable from the Notifications page.
+  cadenceThresholdDays: integer("cadence_threshold_days").notNull().default(21),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
@@ -88,6 +92,10 @@ export const keyDate = pgTable("key_date", {
   recurrence: recurrenceEnum("recurrence").notNull().default("annual"),
   sensitive: boolean("sensitive").notNull().default(false),
   leadTimeDays: integer("lead_time_days").notNull().default(14),
+  // Optional second reminder threshold (e.g. the Birthday/Anniversary
+  // one-tap quick-add sets 14 + 7 so you get nudged twice as it approaches).
+  // Null for dates added through the regular form, which only ever get one.
+  secondaryLeadTimeDays: integer("secondary_lead_time_days"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -158,6 +166,44 @@ export const placesSnapshot = pgTable("places_snapshot", {
 export const jobRun = pgTable("job_run", {
   name: text("name").primaryKey(),
   ranAt: timestamp("ran_at").notNull(),
+});
+
+// Minimal trip stub — just enough to anchor a PlannedActivity and the
+// Upcoming view. The full day-by-day itinerary planner is a later phase.
+export const trip = pgTable("trip", {
+  id: serial("id").primaryKey(),
+  destination: text("destination"),
+  startDate: date("start_date"),
+  endDate: date("end_date"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const plannedActivityTypeEnum = pgEnum("planned_activity_type", [
+  "date_night",
+  "trip",
+  "anniversary_birthday",
+]);
+
+export const plannedActivityStatusEnum = pgEnum("planned_activity_status", [
+  "upcoming",
+  "done",
+  "skipped",
+]);
+
+export const plannedActivity = pgTable("planned_activity", {
+  id: serial("id").primaryKey(),
+  type: plannedActivityTypeEnum("type").notNull(),
+  targetDate: date("target_date"),
+  status: plannedActivityStatusEnum("status").notNull().default("upcoming"),
+  notes: text("notes"),
+  linkedKeyDateId: integer("linked_key_date_id").references(() => keyDate.id, {
+    onDelete: "set null",
+  }),
+  linkedTripId: integer("linked_trip_id").references(() => trip.id, {
+    onDelete: "cascade",
+  }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const notification = pgTable(

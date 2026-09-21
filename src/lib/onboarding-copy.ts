@@ -34,6 +34,22 @@ export function questionFor(category: QuickPickCategory, pronouns: PronounSet): 
   }
 }
 
+// Common color names shown as tap-to-pick chips on the color quick-pick
+// screen, so picking a favorite color doesn't require typing one from
+// scratch. The free-text input alongside them still covers anything else.
+export const COLOR_CHIPS = [
+  "Terracotta",
+  "Sage",
+  "Dusty Rose",
+  "Navy",
+  "Mustard",
+  "Cream",
+  "Burgundy",
+  "Forest Green",
+  "Warm Gray",
+  "Lavender",
+] as const;
+
 export function placeholderFor(category: QuickPickCategory): string {
   switch (category) {
     case "color":

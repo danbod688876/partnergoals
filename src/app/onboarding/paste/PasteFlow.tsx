@@ -246,7 +246,7 @@ export function PasteFlow({
           >
             {saving ? "Saving…" : "Looks good — save it"}
           </button>
-          <Link href="/onboarding/finish" className={ghostLinkClass}>
+          <Link href="/onboarding/plan" className={ghostLinkClass}>
             Skip for now
           </Link>
         </div>

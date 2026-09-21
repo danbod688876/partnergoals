@@ -96,21 +96,29 @@ async function buildMessage(
   return message;
 }
 
-export async function runDailyKeyDateCheck(): Promise<{
-  scanned: number;
-  created: number;
-}> {
-  const rows = await db.select().from(keyDate);
-  let created = 0;
+// Runs the date-lookahead check for a single key_date row and creates a
+// notification if it's newly inside one of its lead-time windows. Shared by
+// the daily cron sweep and the immediate inline check on create/edit (so a
+// date added inside its own lead-time window doesn't wait for the next cron
+// run). Dates can carry two thresholds (e.g. 14 + 7 days from the Birthday/
+// Anniversary quick-add) — checked smallest-first so each threshold's first
+// crossing gets its own notification instead of only ever firing once.
+export async function checkSingleKeyDate(
+  row: typeof keyDate.$inferSelect
+): Promise<boolean> {
+  const occurrence = nextOccurrence(row.date, row.recurrence);
+  const days = daysUntil(occurrence);
+  if (days < 0) return false;
 
-  for (const row of rows) {
-    const occurrence = nextOccurrence(row.date, row.recurrence);
-    const days = daysUntil(occurrence);
+  const thresholds = Array.from(
+    new Set([row.leadTimeDays, row.secondaryLeadTimeDays].filter((t): t is number => t != null))
+  ).sort((a, b) => a - b);
 
-    if (days < 0 || days > row.leadTimeDays) continue;
+  for (const threshold of thresholds) {
+    if (days > threshold) continue;
 
     const windowStart = new Date(occurrence);
-    windowStart.setDate(windowStart.getDate() - row.leadTimeDays);
+    windowStart.setDate(windowStart.getDate() - threshold);
 
     const [existing] = await db
       .select({ id: notification.id })
@@ -137,7 +145,21 @@ export async function runDailyKeyDateCheck(): Promise<{
       dismissed: false,
     });
 
-    created++;
+    return true;
+  }
+
+  return false;
+}
+
+export async function runDailyKeyDateCheck(): Promise<{
+  scanned: number;
+  created: number;
+}> {
+  const rows = await db.select().from(keyDate);
+  let created = 0;
+
+  for (const row of rows) {
+    if (await checkSingleKeyDate(row)) created++;
   }
 
   return { scanned: rows.length, created };

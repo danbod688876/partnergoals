@@ -12,6 +12,7 @@ import {
   secondaryButtonClass,
 } from "@/components/ui";
 import { DeleteButton } from "@/components/DeleteButton";
+import { QuickAddKeyDate } from "@/components/QuickAddKeyDate";
 import { daysUntil, formatDate, nextOccurrence } from "@/lib/dates";
 import { deleteKeyDate, saveKeyDate } from "./actions";
 
@@ -37,6 +38,8 @@ export default async function DatesPage({
         title="Key Dates"
         subtitle="Anniversaries, birthdays, and the days that matter — never caught off guard."
       />
+
+      {!editing && <QuickAddKeyDate />}
 
       <Card className="mb-8">
         <h2 className="mb-4 font-serif text-lg text-ink-800">

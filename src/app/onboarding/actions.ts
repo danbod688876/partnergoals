@@ -133,11 +133,7 @@ export async function saveExtractedData(data: ExtractedData) {
     });
   }
 
-  redirect("/onboarding/finish");
-}
-
-export async function finishQuestionsFlow() {
-  redirect("/onboarding/finish");
+  redirect("/onboarding/plan");
 }
 
 export async function extractFromPaste(

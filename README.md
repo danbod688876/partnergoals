@@ -28,6 +28,8 @@ password gate.
 - `/restaurants` — favorite restaurants; each has a detail page with a
   reservation link/embed for its booking platform
 - `/stores` — an allowlist of trusted stores/brands
+- `/upcoming` — everything scheduled, soonest first: key dates, planned
+  activities, and trips with a future date — no calendar, just a list
 
 ## Onboarding
 
@@ -47,13 +49,26 @@ pronouns step, you pick one of two paths:
   she love?"). Each answer saves immediately; "Skip for now" always moves on
   without one.
 
-Either path ends on a short "that's a great start" screen and drops you into
-the app. Onboarding only ever asks for a handful of things — everything else
-(birthday, city, sizes, dietary notes, key dates) is filled in gradually
-afterward via **drip-enrichment notifications**: the same daily cron
-occasionally asks one specific, small question ("Got a sec? One more thing
-that'll help — what's her birthday?") as a `profile_gap` notification in the
-feed, at most about once a week, always about whatever's still missing.
+After that, one more screen asks **"What's the next activity you'd like to
+plan?"** with three one-tap options — Anniversary/Birthday (creates a key
+date with 14- and 7-day reminders pre-set), Date night (no date needed), or
+Trip away (destination and dates optional) — so the Upcoming view has
+something real in it from day one. Skippable like everything else.
+
+Either path ends on a short "that's a great start" screen. Clicking through
+it triggers one on-demand run of the full scan engine (the same checks the
+daily cron runs) so the notification feed isn't empty on day one — you'll
+see a brief loading state while it runs. Onboarding only ever asks for a
+handful of things — everything else (birthday, city, sizes, dietary notes,
+key dates) is filled in gradually afterward via **drip-enrichment
+notifications**: the same daily cron occasionally asks one specific, small
+question ("Got a sec? One more thing that'll help — what's her birthday?")
+as a `profile_gap` notification in the feed, at most about once a week,
+always about whatever's still missing.
+
+The Birthday/Anniversary one-tap shortcut from onboarding is also available
+any time from `/dates` — two quick-add buttons above the regular form skip
+straight to just a date field.
 
 ## Key-date reminders
 
@@ -74,8 +89,12 @@ These show up in the `/notifications` feed (also the home page). Dismissing
 ("Mark done") clears it; snoozing hides it until the chosen number of days
 has passed, without losing it.
 
-To run the check manually (e.g. to test locally), hit the route with the
-`CRON_SECRET` you configured:
+Creating or editing a key date also runs this check immediately and inline
+for that one date — if it's already inside its lead-time window, the
+reminder fires right away instead of waiting for the next cron tick.
+
+To run the full check manually (e.g. to test locally), hit the route with
+the `CRON_SECRET` you configured:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/daily
@@ -83,7 +102,19 @@ curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/dail
 
 If `CRON_SECRET` isn't set, the route runs unauthenticated — fine for local
 dev, but set it before deploying so the endpoint isn't open to anyone who
-finds the URL.
+finds the URL. (There's also `/api/scan/trigger`, a POST-only route behind
+the normal app login instead of `CRON_SECRET` — that's what the onboarding
+finish screen calls for the one-time on-demand scan.)
+
+## Staying in touch (cadence nudge)
+
+The daily cron also tracks the most recent thing you did together —
+whichever is more recent of a logged activity or a planned
+activity/trip marked done — against a configurable threshold (default 21
+days, editable at the bottom of `/notifications`). If nothing's happened or
+scheduled within that window, it suggests something pulled from your
+partner's hobby/food preferences as a `cadence_nudge` notification, same
+dismiss/snooze pattern as everything else.
 
 ## Restaurant discovery
 

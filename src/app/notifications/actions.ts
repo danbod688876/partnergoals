@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { notification } from "@/db/schema";
+import { notification, partner } from "@/db/schema";
 
 function str(formData: FormData, key: string): string | null {
   const value = formData.get(key);
@@ -40,5 +40,16 @@ export async function unsnoozeNotification(formData: FormData) {
     .update(notification)
     .set({ snoozedUntil: null })
     .where(eq(notification.id, Number(id)));
+  revalidatePath("/notifications");
+}
+
+export async function updateCadenceThreshold(formData: FormData) {
+  const days = Number(str(formData, "cadenceThresholdDays") ?? "21");
+  if (!Number.isFinite(days) || days < 1) return;
+
+  const [row] = await db.select({ id: partner.id }).from(partner).limit(1);
+  if (!row) return;
+
+  await db.update(partner).set({ cadenceThresholdDays: days }).where(eq(partner.id, row.id));
   revalidatePath("/notifications");
 }

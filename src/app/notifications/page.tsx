@@ -1,9 +1,15 @@
 import Link from "next/link";
 import { and, desc, eq, gt, lt, isNull, or, asc } from "drizzle-orm";
 import { db } from "@/db";
-import { notification } from "@/db/schema";
-import { Card, EmptyState, PageHeader, ghostLinkClass } from "@/components/ui";
-import { dismissNotification, snoozeNotification, unsnoozeNotification } from "./actions";
+import { notification, partner } from "@/db/schema";
+import { Card, EmptyState, PageHeader, ghostLinkClass, inputClass, primaryButtonClass } from "@/components/ui";
+import { ScanTrigger } from "./ScanTrigger";
+import {
+  dismissNotification,
+  snoozeNotification,
+  unsnoozeNotification,
+  updateCadenceThreshold,
+} from "./actions";
 
 const TYPE_LABELS: Record<string, string> = {
   key_date_reminder: "Key date",
@@ -11,6 +17,7 @@ const TYPE_LABELS: Record<string, string> = {
   restaurant_similar: "Backup idea",
   restaurant_opening: "New opening",
   profile_gap: "Quick ask",
+  cadence_nudge: "Time together",
 };
 
 const TYPE_STYLES: Record<string, string> = {
@@ -19,6 +26,7 @@ const TYPE_STYLES: Record<string, string> = {
   restaurant_similar: "bg-sage-100 text-sage-700",
   restaurant_opening: "bg-ink-100 text-ink-600",
   profile_gap: "bg-clay-100 text-clay-700",
+  cadence_nudge: "bg-sage-100 text-sage-700",
 };
 
 function timeAgo(date: Date): string {
@@ -32,10 +40,15 @@ function timeAgo(date: Date): string {
   return `${days}d ago`;
 }
 
-export default async function NotificationsPage() {
+export default async function NotificationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ scan?: string }>;
+}) {
+  const { scan } = await searchParams;
   const now = new Date();
 
-  const [open, snoozed] = await Promise.all([
+  const [open, snoozed, [partnerRow]] = await Promise.all([
     db
       .select()
       .from(notification)
@@ -51,6 +64,7 @@ export default async function NotificationsPage() {
       .from(notification)
       .where(and(eq(notification.dismissed, false), gt(notification.snoozedUntil, now)))
       .orderBy(asc(notification.snoozedUntil)),
+    db.select({ cadenceThresholdDays: partner.cadenceThresholdDays }).from(partner).limit(1),
   ]);
 
   return (
@@ -59,6 +73,8 @@ export default async function NotificationsPage() {
         title="Notifications"
         subtitle="Nudges worth acting on, surfaced when they're actually relevant."
       />
+
+      {scan === "1" && <ScanTrigger />}
 
       {open.length === 0 ? (
         <EmptyState>Nothing open right now — you&rsquo;re caught up.</EmptyState>
@@ -145,6 +161,29 @@ export default async function NotificationsPage() {
           </div>
         </div>
       )}
+
+      <div className="mt-10 border-t border-ink-100 pt-6">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-400">
+          Settings
+        </h3>
+        <form action={updateCadenceThreshold} className="flex items-center gap-3">
+          <label htmlFor="cadenceThresholdDays" className="text-sm text-ink-600">
+            Nudge me if nothing&rsquo;s planned together for
+          </label>
+          <input
+            id="cadenceThresholdDays"
+            name="cadenceThresholdDays"
+            type="number"
+            min={1}
+            defaultValue={partnerRow?.cadenceThresholdDays ?? 21}
+            className={`${inputClass} w-20`}
+          />
+          <span className="text-sm text-ink-600">days</span>
+          <button type="submit" className={primaryButtonClass}>
+            Save
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

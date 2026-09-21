@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, inputClass, primaryButtonClass, ghostLinkClass } from "@/components/ui";
-import { QUICK_PICK_CATEGORIES, placeholderFor, questionFor } from "@/lib/onboarding-copy";
+import { COLOR_CHIPS, QUICK_PICK_CATEGORIES, placeholderFor, questionFor } from "@/lib/onboarding-copy";
 import type { PronounSet } from "@/lib/pronouns";
 import { addQuickPickPreference, removePreference } from "../actions";
 
@@ -15,6 +15,8 @@ export function QuestionsFlow({ pronouns }: { pronouns: PronounSet }) {
   const [added, setAdded] = useState<Added[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [selectedChip, setSelectedChip] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const category = step >= 0 ? QUICK_PICK_CATEGORIES[step] : null;
   const isLast = step === QUICK_PICK_CATEGORIES.length - 1;
@@ -22,10 +24,27 @@ export function QuestionsFlow({ pronouns }: { pronouns: PronounSet }) {
   function goNext() {
     setAdded([]);
     setDraft("");
+    setSelectedChip(null);
     if (isLast) {
-      router.push("/onboarding/finish");
+      router.push("/onboarding/plan");
     } else {
       setStep((s) => s + 1);
+    }
+  }
+
+  async function addValue(value: string, { fromChip = false } = {}) {
+    if (!category || !value.trim() || busy) return;
+    setBusy(true);
+    const fd = new FormData();
+    fd.set("category", category);
+    fd.set("value", value.trim());
+    const result = await addQuickPickPreference(fd);
+    setBusy(false);
+    if (result.ok) {
+      setAdded((prev) => [...prev, { id: result.id, value: result.value }]);
+      if (fromChip) setSelectedChip(value.trim());
+      setDraft("");
+      inputRef.current?.focus();
     }
   }
 
@@ -54,34 +73,55 @@ export function QuestionsFlow({ pronouns }: { pronouns: PronounSet }) {
       </h1>
 
       <Card>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!draft.trim()) return;
-            setBusy(true);
-            const fd = new FormData();
-            fd.set("category", category);
-            fd.set("value", draft.trim());
-            const result = await addQuickPickPreference(fd);
-            setBusy(false);
-            if (result.ok) {
-              setAdded((prev) => [...prev, { id: result.id, value: result.value }]);
-              setDraft("");
-            }
-          }}
-          className="flex gap-2"
-        >
+        {category === "color" && (
+          <div className="mb-4">
+            <div className="flex flex-wrap gap-2">
+              {COLOR_CHIPS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => addValue(color, { fromChip: true })}
+                  className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                    selectedChip === color
+                      ? "border-clay-500 bg-clay-100 text-clay-800"
+                      : "border-ink-100 bg-white text-ink-600 hover:bg-ink-50"
+                  }`}
+                >
+                  {color}
+                </button>
+              ))}
+            </div>
+            {selectedChip && (
+              <p className="mt-2 text-sm text-ink-400">Selected: {selectedChip}</p>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-2">
           <input
+            ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={placeholderFor(category)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addValue(draft);
+              }
+            }}
+            placeholder={category === "color" ? "Other color…" : placeholderFor(category)}
             autoFocus
             className={inputClass}
           />
-          <button type="submit" disabled={busy || !draft.trim()} className={primaryButtonClass}>
+          <button
+            type="button"
+            onClick={() => addValue(draft)}
+            disabled={busy || !draft.trim()}
+            className={primaryButtonClass}
+          >
             Add
           </button>
-        </form>
+        </div>
 
         {added.length > 0 && (
           <div className="mt-4 flex flex-wrap gap-2">
@@ -96,6 +136,7 @@ export function QuestionsFlow({ pronouns }: { pronouns: PronounSet }) {
                   onClick={async () => {
                     await removePreference(item.id);
                     setAdded((prev) => prev.filter((a) => a.id !== item.id));
+                    if (selectedChip === item.value) setSelectedChip(null);
                   }}
                   className="text-clay-500 hover:text-clay-700"
                   aria-label={`Remove ${item.value}`}
