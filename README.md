@@ -30,6 +30,8 @@ password gate.
 - `/stores` — an allowlist of trusted stores/brands
 - `/upcoming` — everything scheduled, soonest first: key dates, planned
   activities, and trips with a future date — no calendar, just a list
+- `/planning` — the Planning Session: a chat-based itinerary builder (see
+  below)
 
 ## Onboarding
 
@@ -120,18 +122,23 @@ dismiss/snooze pattern as everything else.
 
 `/restaurants` holds your favorite spots. Each one can carry a booking
 platform (OpenTable, Resy, or other) and a venue ID or URL — paste either the
-platform's own ID/slug for that restaurant, or (safest, especially for Resy)
-the full URL to its page on that platform. The detail page
+platform's own ID/slug for that restaurant, or the full URL to its page on
+that platform (whichever you have handy; the detail page parses an ID/slug
+out of a full URL automatically, e.g. pulling `rid` out of an OpenTable link
+or the venue slug out of a Resy `/venues/...` link). The detail page
 (`/restaurants/[id]`) shows a reservation option built from that:
 
-- **OpenTable**, bare ID: an embedded iframe of OpenTable's own reservation
-  widget, plus a plain "Open on OpenTable" link as a guaranteed fallback.
-- **Resy**, bare ID: an attempt at Resy's public button-widget embed, plus a
-  fallback link to search for the restaurant on resy.com.
-- **Any platform, full URL pasted**: just a direct "Reserve" link to that URL
-  — the most reliable option, since it can't depend on embed syntax at all.
-- **No venue ID, or platform "other"**: a plain message pointing you to call
-  or check the restaurant's own site.
+- **OpenTable**, ID resolved (from a bare ID or parsed out of a pasted URL):
+  an embedded iframe of OpenTable's own reservation widget, plus a plain
+  "Open on OpenTable" link as a guaranteed fallback.
+- **Resy**, slug resolved (from a bare ID or parsed out of a pasted URL): an
+  attempt at Resy's public button-widget embed, plus a fallback link to open
+  the pasted URL (or search resy.com if only a bare ID was given).
+- **A pasted URL that doesn't parse** (e.g. a bare `/r/slug` OpenTable link)
+  or **platform "other" with a URL**: a direct link to that URL instead of
+  guessing at a widget.
+- **No venue ID at all**: a plain message pointing you to call or check the
+  restaurant's own site.
 
 Nothing here ever books anything automatically — every path either embeds
 the platform's own official widget (so booking happens in their iframe, with
@@ -141,6 +148,14 @@ syntax for OpenTable/Resy couldn't be verified against their live docs while
 building this — if a widget doesn't render, the fallback link next to it
 always works, and it's worth checking their current widget docs to update
 `src/components/BookingWidget.tsx` if needed.)
+
+The detail page also shows **"If [restaurant] doesn't work out"** — 3-5
+nearby, similarly-rated backups pulled from Google Places (Nearby Search +
+Place Details), filtered to the restaurant's own cuisine/neighborhood. The
+same lookup (`src/lib/restaurant-backups.ts`) backs the `restaurant_similar`
+notification below and the Planning Session's `suggest_restaurant` tool, and
+is cached per neighborhood+cuisine combo for 24h in a `places_backup_cache`
+table so the same combo doesn't re-hit the Places API on every page view.
 
 The same daily cron job also:
 
@@ -160,8 +175,47 @@ The same daily cron job also:
 
 All three need `GOOGLE_PLACES_API_KEY` set and your partner's `city` filled
 in on `/profile` (used to geocode a search origin). Without a key, favorite
-check-ins still fire — just without the similar-restaurant bundle or opening
-alerts.
+check-ins still fire — just without the similar-restaurant bundle, opening
+alerts, or restaurant-detail backups.
+
+## Planning Session
+
+`/planning` is a chat-based itinerary builder for when you need to turn "I
+should plan something" into an actual plan, fast. It's a two-pane view: a
+chat on the left, and a live **"Your plan"** panel on the right that fills in
+as you talk. Nothing is saved to your profile until you explicitly confirm
+each item — the assistant can only *propose* a key date, a planned activity
+(date night / trip / anniversary-birthday), or a day-by-day trip itinerary
+item, which shows up as a card with Confirm / Edit / Discard. Confirming one
+inserts it via the same actions the regular CRUD pages use; an "Add all"
+button confirms everything at once, in order, for when you're happy with
+the whole plan. Multiple itinerary items proposed without an existing trip
+get grouped into one new trip automatically.
+
+The assistant can also look up your saved favorite restaurants (and, when
+nothing favorited fits, fall back to the same cached Google Places backups
+lookup used on the restaurant detail page) via a read-only
+`suggest_restaurant` tool — it's told never to invent a restaurant that
+isn't a real result.
+
+The chat itself is stateless on the server: the browser holds the full
+transcript and resends it each turn, so there's nothing to persist and
+nothing left behind if you navigate away mid-conversation (only confirmed
+items survive). Needs `ANTHROPIC_API_KEY`; without it, the chat shows a
+plain "isn't configured yet" message instead of failing silently.
+
+Three entry points lead here:
+
+- The **"Talk it through"** option alongside the other three quick-plan
+  choices, wherever `PlanNextActivityPrompt` shows up (onboarding's
+  activity-planning step, and `/upcoming`'s empty state / "+ plan something
+  else").
+- The **urgency branch**: if you enter a birthday/anniversary date that's
+  within 14 days, the quick date-only save is skipped in favor of jumping
+  straight into a Planning Session, pre-seeded with that occasion and date
+  as opening context — the assistant opens by acknowledging it and
+  proposing something concrete right away instead of asking what you want
+  first.
 
 ## Local setup
 
@@ -228,8 +282,8 @@ alerts.
    `vercel.json` and needs no extra setup.
 6. (Optional, for restaurant discovery) Set `GOOGLE_PLACES_API_KEY` — a
    Google Cloud API key with the Places API and Geocoding API enabled.
-7. (Optional, for the "paste your notes" onboarding path) Set
-   `ANTHROPIC_API_KEY` from https://console.anthropic.com.
+7. (Optional, for the "paste your notes" onboarding path and the Planning
+   Session chat) Set `ANTHROPIC_API_KEY` from https://console.anthropic.com.
 8. After the first deploy, run the migration against your production
    database once (e.g. `DATABASE_URL=... npm run db:migrate` from your
    machine, or via a Vercel deploy hook) and seed it:
@@ -245,10 +299,11 @@ That's it — no other configuration needed.
 
 - Core CRUD (profile, preferences, key dates, gift log, activity log,
   restaurant favorites, store allowlist), an onboarding flow, key-date
-  reminders, and restaurant discovery, all feeding one in-app notification
-  center. No email/push notifications, and no automated booking — every
-  reservation path is either an official embedded widget or a link out to
-  the platform itself.
+  reminders, restaurant discovery, and a chat-based Planning Session, all
+  feeding one in-app notification center (or, for Planning Session, one
+  confirm-before-save "Your plan" panel). No email/push notifications, and
+  no automated booking — every reservation path is either an official
+  embedded widget or a link out to the platform itself.
 - Auth is a single shared password (`APP_PASSWORD`), checked against a signed
   session cookie. There are no user accounts.
 - Copy throughout (onboarding, empty states, notifications) is meant to read

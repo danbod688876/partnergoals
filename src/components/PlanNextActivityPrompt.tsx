@@ -1,11 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card, inputClass, labelClass, primaryButtonClass, secondaryButtonClass, ghostLinkClass } from "@/components/ui";
 import { quickAddKeyDate } from "@/app/dates/actions";
 import { createDateNightActivity, createTripActivity } from "@/app/upcoming/actions";
+import { daysUntil, nextOccurrence } from "@/lib/dates";
 
 type Mode = "options" | "anniversary" | "trip";
+
+const URGENCY_WINDOW_DAYS = 14;
 
 export function PlanNextActivityPrompt({
   title = "What's the next activity you'd like to plan?",
@@ -14,6 +18,7 @@ export function PlanNextActivityPrompt({
   title?: string;
   onComplete?: () => void;
 }) {
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>("options");
   const [busy, setBusy] = useState(false);
 
@@ -23,6 +28,18 @@ export function PlanNextActivityPrompt({
         <h2 className="mb-4 font-serif text-lg text-ink-800">When is it?</h2>
         <form
           action={async (formData) => {
+            const date = String(formData.get("date") ?? "");
+            if (!date) return;
+
+            // Urgency branch: if it's coming up soon, a quick date-only save
+            // isn't enough — jump straight into a Planning Session instead,
+            // pre-seeded with this occasion so there's a concrete plan fast.
+            const days = daysUntil(nextOccurrence(date, "annual"));
+            if (days >= 0 && days <= URGENCY_WINDOW_DAYS) {
+              router.push(`/planning?occasion=${encodeURIComponent("Anniversary/Birthday")}&date=${date}`);
+              return;
+            }
+
             setBusy(true);
             formData.set("label", "Anniversary/Birthday");
             await quickAddKeyDate(formData);
@@ -130,6 +147,13 @@ export function PlanNextActivityPrompt({
           className={`${secondaryButtonClass} text-left`}
         >
           Trip away
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push("/planning")}
+          className={`${secondaryButtonClass} text-left`}
+        >
+          Talk it through
         </button>
       </div>
     </Card>

@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { favoriteRestaurant } from "@/db/schema";
 import { Card, ghostLinkClass } from "@/components/ui";
 import { BookingWidget } from "@/components/BookingWidget";
+import { getRestaurantBackups } from "@/lib/restaurant-backups";
 
 const PLATFORM_LABELS: Record<string, string> = {
   opentable: "OpenTable",
@@ -25,6 +26,12 @@ export default async function RestaurantDetailPage({
     .limit(1);
 
   if (!restaurant) notFound();
+
+  const backups = await getRestaurantBackups({
+    neighborhood: restaurant.neighborhood,
+    cuisine: restaurant.cuisine,
+    excludeName: restaurant.name,
+  });
 
   return (
     <div>
@@ -63,6 +70,44 @@ export default async function RestaurantDetailPage({
           )}
           {restaurant.notes && <p className="mt-1 text-sm text-ink-600">{restaurant.notes}</p>}
         </Card>
+      )}
+
+      {backups.length > 0 && (
+        <div className="mt-6">
+          <h2 className="mb-3 font-serif text-lg text-ink-800">
+            If {restaurant.name} doesn&rsquo;t work out
+          </h2>
+          <p className="mb-3 text-sm text-ink-400">
+            A few nearby spots with a similar feel, worth keeping in your back pocket.
+          </p>
+          <div className="space-y-2">
+            {backups.map((b) => (
+              <a
+                key={b.mapsUrl}
+                href={b.mapsUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="block"
+              >
+                <Card className="flex items-center justify-between gap-4 py-3 transition-colors hover:bg-cream-100/40">
+                  <div>
+                    <span className="font-medium text-ink-800">{b.name}</span>
+                    <p className="mt-0.5 text-sm text-ink-400">
+                      {[
+                        b.rating != null ? `${b.rating}★` : null,
+                        b.userRatingsTotal != null ? `${b.userRatingsTotal} reviews` : null,
+                        b.distanceMiles != null ? `${b.distanceMiles}mi away` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-sm text-clay-600">View ↗</span>
+                </Card>
+              </a>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

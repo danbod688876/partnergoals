@@ -206,6 +206,32 @@ export const plannedActivity = pgTable("planned_activity", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Day-by-day itinerary items for a Trip, proposed via the Planning Session's
+// propose_trip_itinerary_item tool (or added directly later). A trip without
+// any of these is still valid — the itinerary is optional detail, not a
+// requirement to have a Trip at all.
+export const tripItineraryItem = pgTable("trip_itinerary_item", {
+  id: serial("id").primaryKey(),
+  tripId: integer("trip_id")
+    .notNull()
+    .references(() => trip.id, { onDelete: "cascade" }),
+  day: integer("day").notNull(),
+  time: text("time"),
+  activity: text("activity").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Short-lived cache of Google Places "backup restaurant" results, keyed by
+// neighborhood+cuisine, so the same combo doesn't hit the Places API on
+// every page view. Read as stale after PLACES_BACKUP_CACHE_TTL_HOURS (see
+// src/lib/restaurant-backups.ts) rather than deleted outright.
+export const placesBackupCache = pgTable("places_backup_cache", {
+  cacheKey: text("cache_key").primaryKey(),
+  resultsJson: text("results_json").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const notification = pgTable(
   "notification",
   {

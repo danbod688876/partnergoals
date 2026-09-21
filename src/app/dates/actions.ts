@@ -66,6 +66,33 @@ export async function quickAddKeyDate(formData: FormData) {
   revalidatePath("/notifications");
 }
 
+// Confirm action for a Planning Session's proposed key date — called
+// directly from the "Your plan" panel, not via <form action>.
+export async function confirmKeyDate(item: {
+  label: string;
+  date: string;
+  recurrence: "annual" | "one_time";
+  sensitive: boolean;
+}): Promise<{ id: number }> {
+  const [row] = await db
+    .insert(keyDate)
+    .values({
+      label: item.label,
+      date: item.date,
+      recurrence: item.recurrence,
+      sensitive: item.sensitive,
+      leadTimeDays: 14,
+      secondaryLeadTimeDays: 7,
+    })
+    .returning();
+
+  await checkSingleKeyDate(row);
+
+  revalidatePath("/dates");
+  revalidatePath("/notifications");
+  return { id: row.id };
+}
+
 export async function deleteKeyDate(formData: FormData) {
   const id = str(formData, "id");
   if (!id) return;

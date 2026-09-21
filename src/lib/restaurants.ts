@@ -1,7 +1,8 @@
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { favoriteRestaurant, jobRun, notification, partner, placesSnapshot, preference } from "@/db/schema";
-import { distanceMiles, geocode, nearbySearch, placeDetails, placeMapsUrl, type LatLng } from "@/lib/google-places";
+import { geocode, nearbySearch, placeMapsUrl, type LatLng } from "@/lib/google-places";
+import { getRestaurantBackups } from "@/lib/restaurant-backups";
 
 const SURFACE_CADENCE_DAYS = 7;
 const OPENING_SCAN_CADENCE_DAYS = 27; // "monthly", self-healing across missed runs
@@ -17,42 +18,33 @@ async function getPartnerLocation(): Promise<{ location: LatLng; city: string | 
   return { location, city: row.city, neighborhood: row.neighborhood };
 }
 
-function formatPrice(priceLevel: number | null): string {
-  return priceLevel != null ? "$".repeat(Math.max(1, priceLevel)) : "";
-}
-
 async function buildSimilarMessage(
-  favorite: typeof favoriteRestaurant.$inferSelect,
-  origin: LatLng
+  favorite: typeof favoriteRestaurant.$inferSelect
 ): Promise<{ message: string; link: string } | null> {
-  const keyword = favorite.cuisine ?? favorite.name;
-  const candidates = await nearbySearch({ location: origin, keyword });
+  // Same cached (24h TTL) backups lookup the restaurant detail page uses —
+  // surfacing a favorite ahead of a key date/trip is the other place the
+  // spec calls for these, so it shouldn't hit Places uncached here either.
+  const picks = await getRestaurantBackups({
+    neighborhood: favorite.neighborhood,
+    cuisine: favorite.cuisine,
+    excludeName: favorite.name,
+  });
 
-  const filtered = candidates
-    .filter((c) => c.name.toLowerCase() !== favorite.name.toLowerCase())
-    .filter((c) => c.rating != null)
-    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.userRatingsTotal ?? 0) - (a.userRatingsTotal ?? 0))
-    .slice(0, 3);
-
-  if (filtered.length === 0) return null;
-
-  const detailed = await Promise.all(filtered.map((c) => placeDetails(c.placeId)));
-  const picks = detailed.filter((d): d is NonNullable<typeof d> => d !== null);
   if (picks.length === 0) return null;
 
-  const parts = picks.map((p) => {
+  const top = picks.slice(0, 3);
+  const parts = top.map((p) => {
     const bits = [
       p.rating != null ? `${p.rating}★` : null,
       p.userRatingsTotal != null ? `${p.userRatingsTotal} reviews` : null,
-      p.location ? `${distanceMiles(origin, p.location).toFixed(1)}mi` : null,
-      formatPrice(p.priceLevel) || null,
+      p.distanceMiles != null ? `${p.distanceMiles}mi` : null,
     ].filter(Boolean);
     return `${p.name} (${bits.join(", ")})`;
   });
 
   return {
     message: `Backup ideas near ${favorite.name}: ${parts.join(", ")}.`,
-    link: placeMapsUrl(picks[0].placeId),
+    link: top[0].mapsUrl,
   };
 }
 
@@ -91,7 +83,7 @@ export async function runRestaurantSurfaceCheck(): Promise<{ scanned: number; cr
     created++;
 
     if (partnerLocation) {
-      const similar = await buildSimilarMessage(favorite, partnerLocation.location);
+      const similar = await buildSimilarMessage(favorite);
       if (similar) {
         await db.insert(notification).values({
           type: "restaurant_similar",
