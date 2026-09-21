@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { desc } from "drizzle-orm";
 import { db } from "@/db";
-import { giftLog } from "@/db/schema";
+import { giftLog, partner } from "@/db/schema";
 import {
   Card,
   EmptyState,
@@ -13,6 +13,7 @@ import {
   secondaryButtonClass,
 } from "@/components/ui";
 import { DeleteButton } from "@/components/DeleteButton";
+import { formsFor } from "@/lib/pronouns";
 import { deleteGift, saveGift } from "./actions";
 
 export default async function GiftsPage({
@@ -21,8 +22,12 @@ export default async function GiftsPage({
   searchParams: Promise<{ edit?: string }>;
 }) {
   const { edit } = await searchParams;
-  const items = await db.select().from(giftLog).orderBy(desc(giftLog.dateGiven));
+  const [items, [partnerRow]] = await Promise.all([
+    db.select().from(giftLog).orderBy(desc(giftLog.dateGiven)),
+    db.select({ pronouns: partner.pronouns }).from(partner).limit(1),
+  ]);
   const editing = edit ? items.find((i) => String(i.id) === edit) : undefined;
+  const { object } = formsFor(partnerRow?.pronouns);
 
   return (
     <div>
@@ -165,7 +170,7 @@ export default async function GiftsPage({
       </Card>
 
       {items.length === 0 ? (
-        <EmptyState>No gifts logged yet — add the first one above.</EmptyState>
+        <EmptyState>Nothing logged yet — add the last thing you got {object}.</EmptyState>
       ) : (
         <div className="space-y-3">
           {items.map((gift) => (

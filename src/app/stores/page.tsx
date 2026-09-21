@@ -115,7 +115,7 @@ export default async function StoresPage({
       </Card>
 
       {items.length === 0 ? (
-        <EmptyState>No stores yet — add the first one above.</EmptyState>
+        <EmptyState>No stores yet — add the first one you trust.</EmptyState>
       ) : (
         <div className="space-y-2">
           {items.map((store) => (

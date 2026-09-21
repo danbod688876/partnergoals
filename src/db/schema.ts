@@ -43,6 +43,7 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "restaurant_surface",
   "restaurant_similar",
   "restaurant_opening",
+  "profile_gap",
 ]);
 
 export const restaurantPlatformEnum = pgEnum("restaurant_platform", [
@@ -51,9 +52,16 @@ export const restaurantPlatformEnum = pgEnum("restaurant_platform", [
   "other",
 ]);
 
+export const partnerPronounsEnum = pgEnum("partner_pronouns", [
+  "she_her",
+  "he_him",
+  "they_them",
+]);
+
 export const partner = pgTable("partner", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  pronouns: partnerPronounsEnum("pronouns").notNull().default("they_them"),
   birthday: date("birthday"),
   city: text("city"),
   neighborhood: text("neighborhood"),

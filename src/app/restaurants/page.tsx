@@ -159,7 +159,7 @@ export default async function RestaurantsPage({
       </Card>
 
       {items.length === 0 ? (
-        <EmptyState>No favorites yet — add the first one above.</EmptyState>
+        <EmptyState>No favorites yet — add the first place worth going back to.</EmptyState>
       ) : (
         <div className="space-y-2">
           {items.map((r) => (

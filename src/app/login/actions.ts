@@ -21,5 +21,5 @@ export async function login(_prevState: { error: string } | undefined, formData:
     path: "/",
   });
 
-  redirect("/notifications");
+  redirect("/");
 }

@@ -34,6 +34,8 @@ export function NavBar({ openNotificationCount = 0 }: { openNotificationCount?: 
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
+  if (pathname?.startsWith("/onboarding")) return null;
+
   return (
     <header className="border-b border-ink-100 bg-cream-50/90 backdrop-blur sticky top-0 z-20">
       <div className="mx-auto flex max-w-4xl items-center justify-between px-5 py-4">

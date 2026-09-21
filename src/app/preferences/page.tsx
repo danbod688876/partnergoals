@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { desc } from "drizzle-orm";
 import { db } from "@/db";
-import { preference, preferenceCategoryEnum, preferenceStrengthEnum } from "@/db/schema";
+import { partner, preference, preferenceCategoryEnum, preferenceStrengthEnum } from "@/db/schema";
 import {
   Card,
   EmptyState,
@@ -13,6 +13,7 @@ import {
   secondaryButtonClass,
 } from "@/components/ui";
 import { DeleteButton } from "@/components/DeleteButton";
+import { formsFor, verb } from "@/lib/pronouns";
 import { deletePreference, savePreference } from "./actions";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -38,8 +39,13 @@ export default async function PreferencesPage({
   searchParams: Promise<{ edit?: string }>;
 }) {
   const { edit } = await searchParams;
-  const items = await db.select().from(preference).orderBy(desc(preference.createdAt));
+  const [items, [partnerRow]] = await Promise.all([
+    db.select().from(preference).orderBy(desc(preference.createdAt)),
+    db.select({ pronouns: partner.pronouns }).from(partner).limit(1),
+  ]);
   const editing = edit ? items.find((i) => String(i.id) === edit) : undefined;
+  const { subject } = formsFor(partnerRow?.pronouns);
+  const loves = verb(partnerRow?.pronouns, "love");
 
   const grouped = new Map<string, typeof items>();
   for (const item of items) {
@@ -140,7 +146,7 @@ export default async function PreferencesPage({
       </Card>
 
       {items.length === 0 ? (
-        <EmptyState>No preferences yet — add the first one above.</EmptyState>
+        <EmptyState>Nothing yet — add the first thing {subject} {loves}.</EmptyState>
       ) : (
         <div className="space-y-8">
           {preferenceCategoryEnum.enumValues

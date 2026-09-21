@@ -105,7 +105,7 @@ export default async function ActivitiesPage({
       </Card>
 
       {items.length === 0 ? (
-        <EmptyState>No activities logged yet — add the first one above.</EmptyState>
+        <EmptyState>Nothing logged yet — add the first thing you did together.</EmptyState>
       ) : (
         <div className="space-y-2">
           {items.map((item) => (

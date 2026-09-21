@@ -10,6 +10,7 @@ const TYPE_LABELS: Record<string, string> = {
   restaurant_surface: "Restaurant",
   restaurant_similar: "Backup idea",
   restaurant_opening: "New opening",
+  profile_gap: "Quick ask",
 };
 
 const TYPE_STYLES: Record<string, string> = {
@@ -17,6 +18,7 @@ const TYPE_STYLES: Record<string, string> = {
   restaurant_surface: "bg-sage-100 text-sage-700",
   restaurant_similar: "bg-sage-100 text-sage-700",
   restaurant_opening: "bg-ink-100 text-ink-600",
+  profile_gap: "bg-clay-100 text-clay-700",
 };
 
 function timeAgo(date: Date): string {

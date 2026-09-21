@@ -14,6 +14,8 @@ password gate.
 ## Pages
 
 - `/login` — password gate
+- `/onboarding` — shown automatically the first time you log in (before any
+  partner profile exists); see below
 - `/` (a.k.a. `/notifications`) — the home feed: open reminders first, newest
   first, with "Mark done" and "Snooze" on each
 - `/profile` — your partner's essentials (sizes, birthday, dietary notes, etc.)
@@ -26,6 +28,32 @@ password gate.
 - `/restaurants` — favorite restaurants; each has a detail page with a
   reservation link/embed for its booking platform
 - `/stores` — an allowlist of trusted stores/brands
+
+## Onboarding
+
+The first time you log in with no partner profile yet, you land on
+`/onboarding` instead of the notification feed. After a quick name +
+pronouns step, you pick one of two paths:
+
+- **"I've already got notes on them"** — paste any freeform text (a note, a
+  list, whatever) and it's sent to the Claude API to pull out structured
+  fields (preferences, key dates, sizes, dietary notes) into an editable
+  review screen before anything is saved. Needs `ANTHROPIC_API_KEY`; without
+  it, this path shows a plain message and lets you skip straight to the
+  quick-pick questions instead.
+- **"Starting fresh"** — a short series of quick-pick questions, one per
+  preference category (colors, flowers, bands, jewelry style, food, hobbies,
+  movies), phrased using whatever pronouns you set (e.g. "What flowers does
+  she love?"). Each answer saves immediately; "Skip for now" always moves on
+  without one.
+
+Either path ends on a short "that's a great start" screen and drops you into
+the app. Onboarding only ever asks for a handful of things — everything else
+(birthday, city, sizes, dietary notes, key dates) is filled in gradually
+afterward via **drip-enrichment notifications**: the same daily cron
+occasionally asks one specific, small question ("Got a sec? One more thing
+that'll help — what's her birthday?") as a `profile_gap` notification in the
+feed, at most about once a week, always about whatever's still missing.
 
 ## Key-date reminders
 
@@ -163,7 +191,9 @@ alerts.
    `vercel.json` and needs no extra setup.
 6. (Optional, for restaurant discovery) Set `GOOGLE_PLACES_API_KEY` — a
    Google Cloud API key with the Places API and Geocoding API enabled.
-7. After the first deploy, run the migration against your production
+7. (Optional, for the "paste your notes" onboarding path) Set
+   `ANTHROPIC_API_KEY` from https://console.anthropic.com.
+8. After the first deploy, run the migration against your production
    database once (e.g. `DATABASE_URL=... npm run db:migrate` from your
    machine, or via a Vercel deploy hook) and seed it:
 
@@ -177,9 +207,13 @@ That's it — no other configuration needed.
 ## Notes
 
 - Core CRUD (profile, preferences, key dates, gift log, activity log,
-  restaurant favorites, store allowlist), key-date reminders, and restaurant
-  discovery, all feeding one in-app notification center. No email/push
-  notifications, and no automated booking — every reservation path is either
-  an official embedded widget or a link out to the platform itself.
+  restaurant favorites, store allowlist), an onboarding flow, key-date
+  reminders, and restaurant discovery, all feeding one in-app notification
+  center. No email/push notifications, and no automated booking — every
+  reservation path is either an official embedded widget or a link out to
+  the platform itself.
 - Auth is a single shared password (`APP_PASSWORD`), checked against a signed
   session cookie. There are no user accounts.
+- Copy throughout (onboarding, empty states, notifications) is meant to read
+  warm and plain-spoken rather than clinical, and adapts to whatever
+  pronouns you set for your partner during onboarding.

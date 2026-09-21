@@ -131,7 +131,7 @@ export default async function DatesPage({
       </Card>
 
       {withNext.length === 0 ? (
-        <EmptyState>No key dates yet — add the first one above.</EmptyState>
+        <EmptyState>No dates on the calendar yet — add the first one that matters.</EmptyState>
       ) : (
         <div className="space-y-2">
           {withNext.map(({ row, next, days }) =>
