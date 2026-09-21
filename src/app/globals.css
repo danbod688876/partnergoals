@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-serif: "Source Serif 4", Georgia, serif;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background-color: #fdfbf7;
+  color: #33302a;
+}
+
+::selection {
+  background-color: #e6c3ac;
+  color: #3f2416;
+}
+
+input,
+textarea,
+select {
+  background-color: #fff;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(175, 103, 64, 0.18);
+  border-color: #c27e57;
+}
