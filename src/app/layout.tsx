@@ -3,6 +3,7 @@ import { Inter, Source_Serif_4 } from "next/font/google";
 import { cookies } from "next/headers";
 import { NavBar } from "@/components/NavBar";
 import { isAuthed } from "@/lib/auth";
+import { getOpenNotificationCount } from "@/lib/notifications";
 import "./globals.css";
 
 const sans = Inter({ subsets: ["latin"], variable: "--font-sans" });
@@ -20,11 +21,12 @@ export default async function RootLayout({
 }) {
   const cookieStore = await cookies();
   const authed = await isAuthed(cookieStore.get("pg_auth")?.value);
+  const openNotificationCount = authed ? await getOpenNotificationCount() : 0;
 
   return (
     <html lang="en">
       <body className={`${sans.variable} ${serif.variable} font-sans antialiased`}>
-        {authed && <NavBar />}
+        {authed && <NavBar openNotificationCount={openNotificationCount} />}
         <main className="mx-auto max-w-3xl px-5 py-8">{children}</main>
       </body>
     </html>

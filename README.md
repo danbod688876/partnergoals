@@ -14,6 +14,8 @@ password gate.
 ## Pages
 
 - `/login` — password gate
+- `/` (a.k.a. `/notifications`) — the home feed: open reminders first, newest
+  first, with "Mark done" and "Snooze" on each
 - `/profile` — your partner's essentials (sizes, birthday, dietary notes, etc.)
 - `/preferences` — likes/loves/dislikes, grouped by category
 - `/dates` — birthdays, anniversaries and other key dates, sorted by what's
@@ -22,6 +24,36 @@ password gate.
 - `/gifts` — a log of gifts given, newest first, with an optional photo
 - `/activities` — a log of things you've done together
 - `/stores` — an allowlist of trusted stores/brands
+
+## Key-date reminders
+
+A daily job (`/api/cron/daily`, triggered by Vercel Cron — see `vercel.json`)
+walks every `key_date` row and compares today against `date - lead_time_days`,
+accounting for annual recurrence by comparing month/day rather than year.
+When a date falls inside its lead-time window and there isn't already an open
+reminder for it this cycle, it writes a `notification` row:
+
+- **Non-sensitive dates** pull the partner's top preferences and the most
+  recent gift(s) with a matching or otherwise recent occasion, and nudge with
+  something like _"Her birthday is in 12 days. Last time: silk scarf. Likes:
+  peonies, Thai food."_
+- **Sensitive dates** stay quiet — just the label and date, no gift framing:
+  _"In 5 days: Anniversary — June 1."_
+
+These show up in the `/notifications` feed (also the home page). Dismissing
+("Mark done") clears it; snoozing hides it until the chosen number of days
+has passed, without losing it.
+
+To run the check manually (e.g. to test locally), hit the route with the
+`CRON_SECRET` you configured:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/daily
+```
+
+If `CRON_SECRET` isn't set, the route runs unauthenticated — fine for local
+dev, but set it before deploying so the endpoint isn't open to anyone who
+finds the URL.
 
 ## Local setup
 
@@ -75,7 +107,12 @@ password gate.
 4. (Optional, for gift photo uploads) Add the **Blob** integration (Storage
    tab) — this sets `BLOB_READ_WRITE_TOKEN` automatically. Without it, you
    can still log gifts by pasting a photo URL instead of uploading a file.
-5. After the first deploy, run the migration against your production
+5. Set `CRON_SECRET` as an environment variable (any random string) — Vercel
+   automatically sends it as a bearer token when it triggers
+   `/api/cron/daily`, so the route only runs for real Cron invocations (or
+   you, with the same value). The cron schedule itself lives in
+   `vercel.json` and needs no extra setup.
+6. After the first deploy, run the migration against your production
    database once (e.g. `DATABASE_URL=... npm run db:migrate` from your
    machine, or via a Vercel deploy hook) and seed it:
 
@@ -88,9 +125,9 @@ That's it — no other configuration needed.
 
 ## Notes
 
-- This is intentionally scoped to core CRUD: profile, preferences, key dates,
-  gift log, activity log, and a store allowlist. No scheduled jobs, external
-  API integrations, trip planning, notifications, or booking flows — that's
-  future work.
+- Core CRUD (profile, preferences, key dates, gift log, activity log, store
+  allowlist) plus key-date reminders and an in-app notification feed. No
+  email/push notifications, external API integrations, trip planning, or
+  booking flows yet — that's future work.
 - Auth is a single shared password (`APP_PASSWORD`), checked against a signed
   session cookie. There are no user accounts.

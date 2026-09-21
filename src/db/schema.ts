@@ -8,6 +8,7 @@ import {
   numeric,
   timestamp,
   pgEnum,
+  index,
 } from "drizzle-orm/pg-core";
 
 export const preferenceCategoryEnum = pgEnum("preference_category", [
@@ -35,6 +36,11 @@ export const storeCategoryEnum = pgEnum("store_category", [
   "flowers",
   "beauty",
   "other",
+]);
+
+// More types land here once later passes (e.g. restaurant availability) are scoped.
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "key_date_reminder",
 ]);
 
 export const partner = pgTable("partner", {
@@ -98,3 +104,23 @@ export const storeBrand = pgTable("store_brand", {
   allowlisted: boolean("allowlisted").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const notification = pgTable(
+  "notification",
+  {
+    id: serial("id").primaryKey(),
+    type: notificationTypeEnum("type").notNull(),
+    keyDateId: integer("key_date_id").references(() => keyDate.id, {
+      onDelete: "cascade",
+    }),
+    message: text("message").notNull(),
+    link: text("link"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    dismissed: boolean("dismissed").notNull().default(false),
+    snoozedUntil: timestamp("snoozed_until"),
+  },
+  (table) => [
+    index("notification_key_date_id_idx").on(table.keyDateId),
+    index("notification_dismissed_idx").on(table.dismissed),
+  ]
+);

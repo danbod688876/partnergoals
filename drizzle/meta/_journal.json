@@ -8,6 +8,13 @@
       "when": 1790013984893,
       "tag": "0000_shallow_ultimates",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790014526014,
+      "tag": "0001_good_scarecrow",
+      "breakpoints": true
     }
   ]
 }
