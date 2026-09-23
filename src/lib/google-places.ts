@@ -16,6 +16,15 @@ export type NearbyPlace = {
   vicinity: string | null;
 };
 
+export type PlaceDetail = NearbyPlace & {
+  website: string | null;
+  mapsUrl: string | null;
+  // Google's own short editorial blurb, when it has one — the closest thing
+  // to an "AI-generated, what this place is known for" sentence without an
+  // extra model call per place.
+  editorialSummary: string | null;
+};
+
 function apiKey(): string | null {
   return process.env.GOOGLE_PLACES_API_KEY || null;
 }
@@ -30,6 +39,9 @@ type RawPlace = {
   price_level?: number;
   vicinity?: string;
   geometry?: { location?: RawLocation };
+  website?: string;
+  url?: string;
+  editorial_summary?: { overview?: string };
 };
 
 type GoogleApiResponse = {
@@ -71,15 +83,16 @@ export async function nearbySearch(params: {
   location: LatLng;
   radiusMeters?: number;
   keyword?: string;
+  type?: "restaurant" | "lodging";
 }): Promise<NearbyPlace[]> {
   const key = apiKey();
   if (!key) return [];
 
-  const { location, radiusMeters = 3200, keyword } = params;
+  const { location, radiusMeters = 3200, keyword, type = "restaurant" } = params;
   const searchParams = new URLSearchParams({
     location: `${location.lat},${location.lng}`,
     radius: String(radiusMeters),
-    type: "restaurant",
+    type,
     key,
   });
   if (keyword) searchParams.set("keyword", keyword);
@@ -101,11 +114,12 @@ export async function nearbySearch(params: {
   }));
 }
 
-export async function placeDetails(placeId: string): Promise<NearbyPlace | null> {
+export async function placeDetails(placeId: string): Promise<PlaceDetail | null> {
   const key = apiKey();
   if (!key) return null;
 
-  const fields = "name,rating,user_ratings_total,price_level,geometry,vicinity";
+  const fields =
+    "name,rating,user_ratings_total,price_level,geometry,vicinity,website,url,editorial_summary";
   const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=${fields}&key=${key}`;
   const json = await safeFetchJson(url);
   const r = json?.result;
@@ -121,6 +135,9 @@ export async function placeDetails(placeId: string): Promise<NearbyPlace | null>
       ? { lat: r.geometry.location.lat, lng: r.geometry.location.lng }
       : null,
     vicinity: r.vicinity ?? null,
+    website: r.website ?? null,
+    mapsUrl: r.url ?? placeMapsUrl(placeId),
+    editorialSummary: r.editorial_summary?.overview ?? null,
   };
 }
 

@@ -13,13 +13,25 @@ password gate.
 
 ## Pages
 
+The nav is deliberately just three items — Planning, Upcoming, Preferences —
+plus a notifications bell. Planning is the front door: `/` redirects there.
+
 - `/login` — password gate
 - `/onboarding` — shown automatically the first time you log in (before any
   partner profile exists); see below
-- `/` (a.k.a. `/notifications`) — the home feed: open reminders first, newest
-  first, with "Mark done" and "Snooze" on each
+- `/planning` — the Planning Session: a chat-based itinerary builder, and the
+  home page (see below)
+- `/upcoming` — everything scheduled, soonest first: key dates, planned
+  activities, and trips with a future date — no calendar, just a list
+- `/preferences` — the **Preferences hub**: fast chip-based preference
+  entry, places you've enjoyed (hotels/restaurants/cafes), and a "More" grid
+  linking out to everything else — `/profile`, `/dates`, `/gifts`,
+  `/activities`, `/restaurants`, `/stores`. Those pages still exist and work
+  exactly as before; they're just reached through here instead of the top
+  nav.
+- `/notifications` — the reminder feed (open reminders, newest first, with
+  "Mark done" and "Snooze"), reached via the bell icon rather than a nav tab
 - `/profile` — your partner's essentials (sizes, birthday, dietary notes, etc.)
-- `/preferences` — likes/loves/dislikes, grouped by category
 - `/dates` — birthdays, anniversaries and other key dates, sorted by what's
   coming up next; dates marked "sensitive" render quietly with no
   gift-planning framing
@@ -28,10 +40,6 @@ password gate.
 - `/restaurants` — favorite restaurants; each has a detail page with a
   reservation link/embed for its booking platform
 - `/stores` — an allowlist of trusted stores/brands
-- `/upcoming` — everything scheduled, soonest first: key dates, planned
-  activities, and trips with a future date — no calendar, just a list
-- `/planning` — the Planning Session: a chat-based itinerary builder (see
-  below)
 
 ## Onboarding
 
@@ -181,30 +189,48 @@ alerts, or restaurant-detail backups.
 ## Planning Session
 
 `/planning` is a chat-based itinerary builder for when you need to turn "I
-should plan something" into an actual plan, fast. It's a two-pane view: a
-chat on the left, and a live **"Your plan"** panel on the right that fills in
-as you talk. Nothing is saved to your profile until you explicitly confirm
-each item — the assistant can only *propose* a key date, a planned activity
-(date night / trip / anniversary-birthday), or a day-by-day trip itinerary
-item, which shows up as a card with Confirm / Edit / Discard. Confirming one
-inserts it via the same actions the regular CRUD pages use; an "Add all"
-button confirms everything at once, in order, for when you're happy with
-the whole plan. Multiple itinerary items proposed without an existing trip
-get grouped into one new trip automatically.
+should plan something" into an actual plan, fast — and the app's home page.
+It's a two-pane view: a chat on the left, and a live **"Your plan"** panel on
+the right that fills in as you talk, grouped into **Stay / Eat & Drink /
+Explore** sections (plus a "Plans" section for key dates and non-trip
+activities that don't fit that grouping). Nothing is saved to your profile
+until you explicitly confirm each item — the assistant can only *propose* a
+key date, a planned activity (date night / trip / anniversary-birthday), or
+a day-by-day trip itinerary item, which shows up as a card with
+Confirm / Edit / Discard. Confirming one inserts it via the same actions the
+regular CRUD pages use; an "Add all" button confirms everything at once. A
+confirmed card stays editable afterward too — Edit on a confirmed item
+updates the real record, not just the card, so changing your mind later
+still works. Multiple itinerary items proposed without an existing trip get
+grouped into one new trip automatically.
 
-The assistant can also look up your saved favorite restaurants (and, when
-nothing favorited fits, fall back to the same cached Google Places backups
-lookup used on the restaurant detail page) via a read-only
-`suggest_restaurant` tool — it's told never to invent a restaurant that
-isn't a real result.
+For a trip, the assistant is steered to ask whether it's tied to an event and
+roughly how many nights, then lead with lodging: it calls a `search_hotels`
+tool (places you've actually enjoyed staying at first, via `/preferences`'s
+"Places you've enjoyed" list, falling back to a Google Places lodging search
+sorted by rating) before proposing a "stay" item. When it proposes a specific
+restaurant stop, the card gets a rating, a short description (Google's own
+editorial summary when it has one), a link to reserve/view, and a fitting
+emoji — looked up live via Google Places rather than invented. The
+`suggest_restaurant` tool works the same way (favorites first, Places as
+fallback) for a plain "where should we eat" question that isn't part of a
+trip itinerary. The assistant is also told about places you've enjoyed
+before (hotels, restaurants, cafes) and asked to reference them when
+relevant — a callback, or ranking a remembered place first if a trip returns
+to that city.
 
-The chat itself is stateless on the server: the browser holds the full
-transcript and resends it each turn, so there's nothing to persist and
-nothing left behind if you navigate away mid-conversation (only confirmed
-items survive). Needs `ANTHROPIC_API_KEY`; without it, the chat shows a
-plain "isn't configured yet" message instead of failing silently.
+Unlike earlier versions of this feature, the chat is **not** ephemeral: each
+conversation is a named, saved **Plan** (`plan` / `plan_message` / `plan_item`
+tables) — the assistant names it itself via a `set_plan_title` tool once
+there's enough context (e.g. "Austin Weekend"), usually right after the first
+proposal. The "My plans" button lets you switch between in-progress plans or
+start a new one, and navigating away and coming back resumes exactly where
+you left off — transcript, proposed cards, and confirmed status all included.
+Needs `ANTHROPIC_API_KEY`; without it, the chat shows a plain "isn't
+configured yet" message instead of failing silently (a draft plan still gets
+created either way).
 
-Three entry points lead here:
+Two entry points lead here beyond just visiting `/planning` directly:
 
 - The **"Talk it through"** option alongside the other three quick-plan
   choices, wherever `PlanNextActivityPrompt` shows up (onboarding's
@@ -216,6 +242,20 @@ Three entry points lead here:
   as opening context — the assistant opens by acknowledging it and
   proposing something concrete right away instead of asking what you want
   first.
+
+## Preferences hub
+
+`/preferences` leads with fast entry: every preference category shows as a
+row of chips (existing preferences) plus a trailing input — type something
+and hit Enter to save it immediately at "like" strength, click a chip's × to
+remove it. A collapsed "Add with more detail" section underneath still
+supports setting strength (like/love/dislike) and notes when that's worth
+the extra step. Below that, **"Places you've enjoyed"** is a simple log of
+hotels/restaurants/cafes you've actually liked (`enjoyed_place` table,
+distinct from `/restaurants`'s reservation-focused favorites list) — this is
+what the Planning Session's hotel suggestions and preference callbacks pull
+from. A "More" grid at the bottom links out to Profile, Key Dates, Gift Log,
+Activities, Restaurants, and Stores.
 
 ## Local setup
 

@@ -93,6 +93,18 @@ export async function confirmKeyDate(item: {
   return { id: row.id };
 }
 
+// Edit action for a key date that was already confirmed from a Planning
+// Session — lets you change your mind after the fact instead of only being
+// able to edit it via the full /dates form.
+export async function updateConfirmedKeyDate(
+  id: number,
+  patch: { label: string; date: string; recurrence: "annual" | "one_time"; sensitive: boolean }
+): Promise<void> {
+  await db.update(keyDate).set(patch).where(eq(keyDate.id, id));
+  revalidatePath("/dates");
+  revalidatePath("/upcoming");
+}
+
 export async function deleteKeyDate(formData: FormData) {
   const id = str(formData, "id");
   if (!id) return;

@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Card, inputClass, primaryButtonClass } from "@/components/ui";
+import { useRouter } from "next/navigation";
+import { Card, inputClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui";
 import type { ProposedItem } from "@/lib/planning-session";
 import { PlanPanel, type PlanItem } from "./PlanPanel";
+import { createDraftPlan, listDraftPlans, loadPlan, type DraftPlanSummary } from "./actions";
 
 type ChatMessage = { id: string; role: "user" | "assistant"; text: string; hidden?: boolean };
 
@@ -13,12 +15,26 @@ function nextId(): string {
   return `msg-${idCounter}`;
 }
 
-export function PlanningSession({ occasion, date }: { occasion?: string; date?: string }) {
+export function PlanningSession({
+  occasion,
+  date,
+  planId: initialPlanId,
+}: {
+  occasion?: string;
+  date?: string;
+  planId?: number;
+}) {
+  const router = useRouter();
+  const [planId, setPlanId] = useState<number | null>(initialPlanId ?? null);
+  const [planName, setPlanName] = useState<string>("New plan");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [drafts, setDrafts] = useState<DraftPlanSummary[]>([]);
+  const [showDrafts, setShowDrafts] = useState(false);
   const hasStarted = useRef(false);
   const usedContext = useRef(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -29,11 +45,32 @@ export function PlanningSession({ occasion, date }: { occasion?: string; date?: 
     if (hasStarted.current) return;
     hasStarted.current = true;
 
-    if (hasContext) {
-      const kickoff: ChatMessage = { id: nextId(), role: "user", text: "Let's get started.", hidden: true };
-      setMessages([kickoff]);
-      runTurn([kickoff], true);
-    }
+    (async () => {
+      if (initialPlanId) {
+        const loaded = await loadPlan(initialPlanId);
+        if (loaded) {
+          setPlanName(loaded.plan.name);
+          setMessages(loaded.messages.map((m) => ({ id: m.id, role: m.role, text: m.content, hidden: m.hidden })));
+          setPlanItems(
+            loaded.items.map((i) => ({ ...(i.payload as ProposedItem), status: i.status, dbId: i.dbId }))
+          );
+          setReady(true);
+          return;
+        }
+      }
+
+      const created = await createDraftPlan();
+      setPlanId(created.id);
+      setPlanName(created.name);
+      setReady(true);
+
+      if (hasContext) {
+        const kickoff: ChatMessage = { id: nextId(), role: "user", text: "Let's get started.", hidden: true };
+        setMessages([kickoff]);
+        usedContext.current = true;
+        runTurn(created.id, kickoff.text, true, true);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -41,7 +78,7 @@ export function PlanningSession({ occasion, date }: { occasion?: string; date?: 
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  async function runTurn(history: ChatMessage[], useContext: boolean) {
+  async function runTurn(activePlanId: number, text: string, hidden: boolean, useContext: boolean) {
     setStreaming(true);
     setError(null);
 
@@ -53,7 +90,8 @@ export function PlanningSession({ occasion, date }: { occasion?: string; date?: 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: history.map((m) => ({ role: m.role, content: m.text })),
+          planId: activePlanId,
+          message: { role: "user", content: text, hidden },
           context: useContext ? { occasion, date } : undefined,
         }),
       });
@@ -77,7 +115,8 @@ export function PlanningSession({ occasion, date }: { occasion?: string; date?: 
 
           const event = JSON.parse(line) as
             | { type: "text"; text: string }
-            | { type: "proposal"; item: ProposedItem }
+            | { type: "proposal"; item: ProposedItem; dbId: number }
+            | { type: "title"; title: string }
             | { type: "done" }
             | { type: "error"; message: string };
 
@@ -88,7 +127,9 @@ export function PlanningSession({ occasion, date }: { occasion?: string; date?: 
               prev.map((m) => (m.id === assistantId ? { ...m, text: snapshot } : m))
             );
           } else if (event.type === "proposal") {
-            setPlanItems((prev) => [...prev, { ...event.item, status: "proposed" }]);
+            setPlanItems((prev) => [...prev, { ...event.item, status: "proposed", dbId: event.dbId }]);
+          } else if (event.type === "title") {
+            setPlanName(event.title);
           } else if (event.type === "error") {
             setError(event.message);
           }
@@ -103,74 +144,114 @@ export function PlanningSession({ occasion, date }: { occasion?: string; date?: 
 
   function send() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || !planId) return;
     setInput("");
     const userMsg: ChatMessage = { id: nextId(), role: "user", text };
-    const history = [...messages, userMsg];
-    setMessages(history);
+    setMessages((prev) => [...prev, userMsg]);
     const useContext = hasContext && !usedContext.current;
     usedContext.current = true;
-    runTurn(history, useContext);
+    runTurn(planId, text, false, useContext);
+  }
+
+  async function openDraftMenu() {
+    setShowDrafts((v) => !v);
+    if (!showDrafts) setDrafts(await listDraftPlans());
+  }
+
+  if (!ready) {
+    return <p className="text-sm text-ink-400">Loading…</p>;
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-      <div className="flex h-[75vh] flex-col">
-        <div className="mb-3">
-          <h1 className="font-serif text-2xl text-ink-800">Let&rsquo;s plan something</h1>
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h1 className="font-serif text-2xl text-ink-800">{planName}</h1>
           <p className="text-sm text-ink-400">
             {hasContext
               ? `Talking through ${occasion ?? "an upcoming date"}${date ? ` (${date})` : ""}.`
               : "Tell me what's on your mind — I'll help you put a plan together."}
           </p>
         </div>
-
-        <div className="flex-1 space-y-4 overflow-y-auto rounded-xl2 border border-ink-100 bg-white p-4">
-          {messages
-            .filter((m) => !m.hidden)
-            .map((m) => (
-              <div key={m.id} className={m.role === "user" ? "text-right" : "text-left"}>
-                <div
-                  className={`inline-block max-w-[85%] rounded-xl2 px-4 py-2 text-sm ${
-                    m.role === "user"
-                      ? "bg-clay-500 text-white"
-                      : "bg-cream-100 text-ink-800"
+        <div className="relative">
+          <button onClick={openDraftMenu} className={secondaryButtonClass}>
+            My plans
+          </button>
+          {showDrafts && (
+            <div className="absolute right-0 z-10 mt-2 w-64 rounded-xl2 border border-ink-100 bg-white p-2 shadow-soft">
+              <button
+                onClick={() => router.push("/planning")}
+                className="block w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-clay-600 hover:bg-cream-100"
+              >
+                + New plan
+              </button>
+              <div className="my-1 border-t border-ink-100" />
+              {drafts.length === 0 && <p className="px-3 py-2 text-sm text-ink-400">No other drafts yet.</p>}
+              {drafts.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => router.push(`/planning?plan=${d.id}`)}
+                  className={`block w-full rounded-lg px-3 py-2 text-left text-sm ${
+                    d.id === planId ? "bg-cream-100 text-ink-800" : "text-ink-600 hover:bg-cream-100"
                   }`}
                 >
-                  {m.text || (streaming && m.id === messages[messages.length - 1]?.id ? "…" : "")}
-                </div>
-              </div>
-            ))}
-          {error && <p className="text-sm text-clay-600">{error}</p>}
-          <div ref={transcriptEndRef} />
-        </div>
-
-        <div className="mt-3 flex gap-2">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                send();
-              }
-            }}
-            placeholder="Type a message…"
-            disabled={streaming}
-            autoFocus
-            className={inputClass}
-          />
-          <button onClick={send} disabled={streaming || !input.trim()} className={primaryButtonClass}>
-            Send
-          </button>
+                  {d.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      <div>
-        <h2 className="mb-3 font-serif text-lg text-ink-800">Your plan</h2>
-        <Card className="max-h-[75vh] overflow-y-auto bg-cream-50/50 p-4">
-          <PlanPanel items={planItems} setItems={setPlanItems} />
-        </Card>
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="flex h-[70vh] flex-col">
+          <div className="flex-1 space-y-4 overflow-y-auto rounded-xl2 border border-ink-100 bg-white p-4">
+            {messages
+              .filter((m) => !m.hidden)
+              .map((m) => (
+                <div key={m.id} className={m.role === "user" ? "text-right" : "text-left"}>
+                  <div
+                    className={`inline-block max-w-[85%] rounded-xl2 px-4 py-2 text-sm ${
+                      m.role === "user"
+                        ? "bg-clay-500 text-white"
+                        : "bg-cream-100 text-ink-800"
+                    }`}
+                  >
+                    {m.text || (streaming && m.id === messages[messages.length - 1]?.id ? "…" : "")}
+                  </div>
+                </div>
+              ))}
+            {error && <p className="text-sm text-clay-600">{error}</p>}
+            <div ref={transcriptEndRef} />
+          </div>
+
+          <div className="mt-3 flex gap-2">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder="Type a message…"
+              disabled={streaming}
+              autoFocus
+              className={inputClass}
+            />
+            <button onClick={send} disabled={streaming || !input.trim()} className={primaryButtonClass}>
+              Send
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <h2 className="mb-3 font-serif text-lg text-ink-800">Your plan</h2>
+          <Card className="max-h-[70vh] overflow-y-auto bg-cream-50/50 p-4">
+            <PlanPanel items={planItems} setItems={setPlanItems} />
+          </Card>
+        </div>
       </div>
     </div>
   );

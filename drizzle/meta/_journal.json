@@ -43,6 +43,13 @@
       "when": 1790025873286,
       "tag": "0005_living_human_fly",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790198103396,
+      "tag": "0006_silent_stellaris",
+      "breakpoints": true
     }
   ]
 }

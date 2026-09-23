@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { plannedActivity, trip, tripItineraryItem } from "@/db/schema";
 
@@ -119,4 +120,23 @@ export async function confirmItineraryItem(item: {
 
   revalidatePath("/upcoming");
   return row;
+}
+
+// Edit actions for items already confirmed from a Planning Session — lets
+// you change your mind after the fact instead of the card being locked in.
+
+export async function updateConfirmedPlannedActivity(
+  id: number,
+  patch: { targetDate: string | null; notes: string | null }
+): Promise<void> {
+  await db.update(plannedActivity).set(patch).where(eq(plannedActivity.id, id));
+  revalidatePath("/upcoming");
+}
+
+export async function updateConfirmedItineraryItem(
+  id: number,
+  patch: { day: number; time: string | null; activity: string; notes: string | null }
+): Promise<void> {
+  await db.update(tripItineraryItem).set(patch).where(eq(tripItineraryItem.id, id));
+  revalidatePath("/upcoming");
 }

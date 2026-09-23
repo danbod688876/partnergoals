@@ -232,6 +232,90 @@ export const placesBackupCache = pgTable("places_backup_cache", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// A named, saveable Planning Session draft — lets you have several
+// in-progress conversations (e.g. "Vancouver weekend" and "Mom's birthday")
+// and resume any of them instead of losing everything on navigation.
+export const plan = pgTable("plan", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().default("New plan"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const planMessageRoleEnum = pgEnum("plan_message_role", ["user", "assistant"]);
+
+// Persisted chat transcript for a Plan. "hidden" mirrors the client's
+// synthetic urgency-branch kickoff message, which is sent to the model but
+// never rendered.
+export const planMessage = pgTable(
+  "plan_message",
+  {
+    id: serial("id").primaryKey(),
+    planId: integer("plan_id")
+      .notNull()
+      .references(() => plan.id, { onDelete: "cascade" }),
+    role: planMessageRoleEnum("role").notNull(),
+    content: text("content").notNull(),
+    hidden: boolean("hidden").notNull().default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("plan_message_plan_id_idx").on(table.planId)]
+);
+
+export const planItemStatusEnum = pgEnum("plan_item_status", ["proposed", "confirmed"]);
+
+// "other" covers key dates / non-trip planned activities, which don't fit
+// a Stay/Eat/Explore itinerary grouping.
+export const planItemCategoryEnum = pgEnum("plan_item_category", [
+  "stay",
+  "eat_drink",
+  "explore",
+  "other",
+]);
+
+// A card in the "Your plan" panel — proposed by the assistant, confirmed (or
+// not) by the user. payloadJson holds the full ProposedItem shape so an
+// edited-but-unconfirmed item survives a resumed session; confirmedRecordType
+// / confirmedRecordId point at the real row once Confirm has been pressed, so
+// a later edit can update that row directly instead of re-creating it.
+export const planItem = pgTable(
+  "plan_item",
+  {
+    id: serial("id").primaryKey(),
+    planId: integer("plan_id")
+      .notNull()
+      .references(() => plan.id, { onDelete: "cascade" }),
+    clientId: text("client_id").notNull(),
+    category: planItemCategoryEnum("category").notNull().default("other"),
+    status: planItemStatusEnum("status").notNull().default("proposed"),
+    payloadJson: text("payload_json").notNull(),
+    confirmedRecordType: text("confirmed_record_type"),
+    confirmedRecordId: integer("confirmed_record_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("plan_item_plan_id_idx").on(table.planId)]
+);
+
+export const enjoyedPlaceTypeEnum = pgEnum("enjoyed_place_type", [
+  "hotel",
+  "restaurant",
+  "cafe",
+  "other",
+]);
+
+// Places the partner has actually enjoyed (distinct from favorite_restaurant,
+// which is about reservations) — the Planning Session checks these first and
+// references them ("similar to the place you stayed at in Austin") before
+// falling back to a cold Places search.
+export const enjoyedPlace = pgTable("enjoyed_place", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  type: enjoyedPlaceTypeEnum("type").notNull().default("other"),
+  city: text("city"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const notification = pgTable(
   "notification",
   {

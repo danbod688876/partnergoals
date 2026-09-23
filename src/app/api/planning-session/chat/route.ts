@@ -1,14 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { asc, eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
+import { db } from "@/db";
+import { plan, planItem, planMessage } from "@/db/schema";
 import { PLANNING_TOOLS, buildSystemPrompt, executeTool, type ProposedItem } from "@/lib/planning-session";
 
 export const maxDuration = 60;
 
-type ChatMessage = { role: "user" | "assistant"; content: string };
-
 type NdjsonEvent =
   | { type: "text"; text: string }
-  | { type: "proposal"; item: ProposedItem }
+  | { type: "proposal"; item: ProposedItem; dbId: number }
+  | { type: "title"; title: string }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -16,41 +18,57 @@ function encodeLine(event: NdjsonEvent): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(event) + "\n");
 }
 
+function errorResponse(message: string): Response {
+  const body =
+    JSON.stringify({ type: "error", message } satisfies NdjsonEvent) +
+    "\n" +
+    JSON.stringify({ type: "done" } satisfies NdjsonEvent) +
+    "\n";
+  return new Response(body, { headers: { "Content-Type": "application/x-ndjson" } });
+}
+
 export async function POST(req: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    const body =
-      JSON.stringify({
-        type: "error",
-        message: "ANTHROPIC_API_KEY isn't configured, so Planning Session can't run yet.",
-      } satisfies NdjsonEvent) +
-      "\n" +
-      JSON.stringify({ type: "done" } satisfies NdjsonEvent) +
-      "\n";
-    return new Response(body, { headers: { "Content-Type": "application/x-ndjson" } });
+    return errorResponse("ANTHROPIC_API_KEY isn't configured, so Planning Session can't run yet.");
   }
 
   const body = await req.json();
-  const clientMessages: ChatMessage[] = Array.isArray(body.messages) ? body.messages : [];
+  const planId: number | undefined = body.planId;
+  const newMessage: { role: "user"; content: string; hidden: boolean } | undefined = body.message;
   const context: { occasion?: string; date?: string } | undefined = body.context;
 
-  const messages: Anthropic.MessageParam[] = clientMessages.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  if (!planId) return errorResponse("Missing plan id.");
 
+  const [planRow] = await db.select().from(plan).where(eq(plan.id, planId)).limit(1);
+  if (!planRow) return errorResponse("That plan couldn't be found — try starting a new one.");
+
+  if (newMessage) {
+    await db.insert(planMessage).values({
+      planId,
+      role: "user",
+      content: newMessage.content,
+      hidden: newMessage.hidden,
+    });
+  }
+
+  const history = await db
+    .select()
+    .from(planMessage)
+    .where(eq(planMessage.planId, planId))
+    .orderBy(asc(planMessage.createdAt));
+
+  const messages: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
   if (messages.length === 0) {
-    // Kickoff turn with pre-seeded context (urgency branch) — a hidden
-    // opening message the client never renders, just enough to get the
-    // model talking about the occasion instead of asking what to do.
-    messages.push({ role: "user", content: "Let's get started." });
+    return errorResponse("Say something to get started.");
   }
 
   const client = new Anthropic({ apiKey });
-  const system = buildSystemPrompt(context);
+  const system = await buildSystemPrompt(context);
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      let assistantText = "";
       try {
         // Bounded loop: each pass is one assistant turn, possibly followed
         // by tool execution and another pass. Caps prevent a runaway loop
@@ -65,6 +83,7 @@ export async function POST(req: NextRequest) {
           });
 
           apiStream.on("text", (delta) => {
+            assistantText += delta;
             controller.enqueue(encodeLine({ type: "text", text: delta }));
           });
 
@@ -76,11 +95,30 @@ export async function POST(req: NextRequest) {
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
           for (const block of final.content) {
             if (block.type !== "tool_use") continue;
-            const { resultForModel, proposal } = await executeTool(
+            const { resultForModel, proposal, planTitle } = await executeTool(
               block.name,
               block.input as Record<string, unknown>
             );
-            if (proposal) controller.enqueue(encodeLine({ type: "proposal", item: proposal }));
+
+            if (proposal) {
+              const [itemRow] = await db
+                .insert(planItem)
+                .values({
+                  planId,
+                  clientId: proposal.clientId,
+                  category: proposal.category,
+                  status: "proposed",
+                  payloadJson: JSON.stringify(proposal),
+                })
+                .returning({ id: planItem.id });
+              controller.enqueue(encodeLine({ type: "proposal", item: proposal, dbId: itemRow.id }));
+            }
+
+            if (planTitle) {
+              await db.update(plan).set({ name: planTitle }).where(eq(plan.id, planId));
+              controller.enqueue(encodeLine({ type: "title", title: planTitle }));
+            }
+
             toolResults.push({
               type: "tool_result",
               tool_use_id: block.id,
@@ -90,9 +128,17 @@ export async function POST(req: NextRequest) {
           messages.push({ role: "user", content: toolResults });
         }
 
+        if (assistantText.trim()) {
+          await db.insert(planMessage).values({ planId, role: "assistant", content: assistantText });
+        }
+        await db.update(plan).set({ updatedAt: new Date() }).where(eq(plan.id, planId));
+
         controller.enqueue(encodeLine({ type: "done" }));
       } catch (err) {
         console.error("Planning session chat failed:", err);
+        if (assistantText.trim()) {
+          await db.insert(planMessage).values({ planId, role: "assistant", content: assistantText });
+        }
         controller.enqueue(
           encodeLine({ type: "error", message: "Something went wrong — try sending that again." })
         );
