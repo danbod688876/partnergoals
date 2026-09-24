@@ -104,6 +104,7 @@ export function PlanPanel({
             time: item.time,
             activity: item.activity,
             notes: item.notes,
+            destination: item.destination,
           });
           setConfirmedTripId(result.tripId);
           recordType = "trip_itinerary_item";
@@ -199,7 +200,9 @@ export function PlanPanel({
               {byCategory.get(section.key)!.map((item) => (
                 <Card
                   key={item.clientId}
-                  className={`py-4 ${item.status === "confirmed" ? "bg-cream-50/60" : ""}`}
+                  className={`py-4 ${item.category === "stay" ? "border-l-4 border-l-sage-400" : ""} ${
+                    item.status === "confirmed" ? "bg-cream-50/60" : ""
+                  }`}
                 >
                   {item.status === "confirmed" && (
                     <span className="mb-2 inline-block rounded-full bg-sage-100 px-2 py-0.5 text-xs font-medium text-sage-700">
@@ -291,37 +294,38 @@ function ItemView({ item }: { item: PlanItem }) {
     );
   }
 
-  const restaurant = item.restaurantInfo;
+  const place = item.restaurantInfo ?? item.hotelInfo;
+  const isHotel = item.category === "stay" && item.hotelInfo != null;
 
   return (
     <div>
       <span className="font-medium text-ink-800">
-        {restaurant && <span className="mr-1.5">{restaurant.emoji}</span>}
+        {place && <span className="mr-1.5">{place.emoji}</span>}
         Day {item.day}
         {item.time ? ` · ${item.time}` : ""}
       </span>
       <p className="mt-1 text-sm text-ink-600">{item.activity}</p>
       {item.notes && <p className="mt-1 text-sm text-ink-400">{item.notes}</p>}
 
-      {restaurant && (
+      {place && (
         <div className="mt-3 space-y-1.5 rounded-lg bg-cream-100/50 p-3 text-sm">
-          {restaurant.blurb && <p className="text-ink-600">{restaurant.blurb}</p>}
+          {place.blurb && <p className="text-ink-600">{place.blurb}</p>}
           <p className="text-ink-400">
             {[
-              restaurant.rating != null ? `${restaurant.rating}★` : null,
-              restaurant.userRatingsTotal != null ? `${restaurant.userRatingsTotal} reviews` : null,
+              place.rating != null ? `${place.rating}★` : null,
+              place.userRatingsTotal != null ? `${place.userRatingsTotal} reviews` : null,
             ]
               .filter(Boolean)
               .join(" · ")}
           </p>
-          {restaurant.link && (
+          {place.link && (
             <a
-              href={restaurant.link}
+              href={place.link}
               target="_blank"
               rel="noreferrer"
               className="inline-block text-clay-600 hover:text-clay-700 hover:underline"
             >
-              View / reserve ↗
+              {isHotel ? "View / book ↗" : "View / reserve ↗"}
             </a>
           )}
         </div>

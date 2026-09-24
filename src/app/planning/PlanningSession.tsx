@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card, inputClass, primaryButtonClass, secondaryButtonClass } from "@/components/ui";
 import type { ProposedItem } from "@/lib/planning-session";
 import { PlanPanel, type PlanItem } from "./PlanPanel";
-import { createDraftPlan, listDraftPlans, loadPlan, type DraftPlanSummary } from "./actions";
+import { createDraftPlan, listDraftPlans, loadPlan, renamePlan, type DraftPlanSummary } from "./actions";
 
 type ChatMessage = { id: string; role: "user" | "assistant"; text: string; hidden?: boolean };
 
@@ -35,6 +35,8 @@ export function PlanningSession({
   const [ready, setReady] = useState(false);
   const [drafts, setDrafts] = useState<DraftPlanSummary[]>([]);
   const [showDrafts, setShowDrafts] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const hasStarted = useRef(false);
   const usedContext = useRef(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -158,6 +160,19 @@ export function PlanningSession({
     if (!showDrafts) setDrafts(await listDraftPlans());
   }
 
+  function startEditingTitle() {
+    setTitleDraft(planName);
+    setEditingTitle(true);
+  }
+
+  function saveTitle() {
+    const trimmed = titleDraft.trim();
+    setEditingTitle(false);
+    if (!trimmed || trimmed === planName || !planId) return;
+    setPlanName(trimmed);
+    void renamePlan(planId, trimmed);
+  }
+
   if (!ready) {
     return <p className="text-sm text-ink-400">Loading…</p>;
   }
@@ -166,8 +181,32 @@ export function PlanningSession({
     <div>
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h1 className="font-serif text-2xl text-ink-800">{planName}</h1>
-          <p className="text-sm text-ink-400">
+          {editingTitle ? (
+            <input
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  saveTitle();
+                } else if (e.key === "Escape") {
+                  setEditingTitle(false);
+                }
+              }}
+              autoFocus
+              className="w-full rounded-lg border border-ink-100 px-2 py-1 font-serif text-2xl text-ink-800 focus:outline-none focus:ring-1 focus:ring-clay-300"
+            />
+          ) : (
+            <button
+              onClick={startEditingTitle}
+              className="rounded-lg px-2 py-1 text-left font-serif text-2xl text-ink-800 hover:bg-cream-100"
+              title="Click to rename"
+            >
+              {planName}
+            </button>
+          )}
+          <p className="mt-1 text-sm text-ink-400">
             {hasContext
               ? `Talking through ${occasion ?? "an upcoming date"}${date ? ` (${date})` : ""}.`
               : "Tell me what's on your mind — I'll help you put a plan together."}

@@ -209,26 +209,41 @@ roughly how many nights, then lead with lodging: it calls a `search_hotels`
 tool (places you've actually enjoyed staying at first, via `/preferences`'s
 "Places you've enjoyed" list, falling back to a Google Places lodging search
 sorted by rating) before proposing a "stay" item. When it proposes a specific
-restaurant stop, the card gets a rating, a short description (Google's own
-editorial summary when it has one), a link to reserve/view, and a fitting
-emoji — looked up live via Google Places rather than invented. The
-`suggest_restaurant` tool works the same way (favorites first, Places as
-fallback) for a plain "where should we eat" question that isn't part of a
-trip itinerary. The assistant is also told about places you've enjoyed
-before (hotels, restaurants, cafes) and asked to reference them when
-relevant — a callback, or ranking a remembered place first if a trip returns
-to that city.
+restaurant or hotel, the card gets a rating, a short description (Google's
+own editorial summary when it has one), a link to reserve/book, and a
+fitting emoji — looked up live via Google Places rather than invented; a
+"stay" card also gets a distinct accent border so it reads as lodging at a
+glance. The `suggest_restaurant` tool works the same way (favorites first,
+Places as fallback) for a plain "where should we eat" question that isn't
+part of a trip itinerary.
+
+Every trip-related tool call (`suggest_restaurant`, `search_hotels`,
+`propose_trip_itinerary_item`) takes an explicit destination — the model is
+told to always pass the trip's city, not assume the user's own. Without
+that, searches would quietly run against your home city (from `/profile`)
+even for a trip somewhere else, which is what the destination-aware search
+now specifically avoids.
+
+The assistant is also told about places you've enjoyed before (hotels,
+restaurants, cafes) and asked to reference them when relevant — a callback,
+or ranking a remembered place first if a trip returns to that city — and it
+proactively calls a `save_preference` tool whenever you mention a taste in
+conversation (a favorite cuisine, a hobby), so it's remembered in
+`/preferences` for next time without you having to add it separately. When a
+lookup comes back empty, it's told to ask concisely for what it needs
+(a neighborhood, a favorite cuisine) rather than explain the search mechanics.
 
 Unlike earlier versions of this feature, the chat is **not** ephemeral: each
 conversation is a named, saved **Plan** (`plan` / `plan_message` / `plan_item`
 tables) — the assistant names it itself via a `set_plan_title` tool once
 there's enough context (e.g. "Austin Weekend"), usually right after the first
-proposal. The "My plans" button lets you switch between in-progress plans or
-start a new one, and navigating away and coming back resumes exactly where
-you left off — transcript, proposed cards, and confirmed status all included.
-Needs `ANTHROPIC_API_KEY`; without it, the chat shows a plain "isn't
-configured yet" message instead of failing silently (a draft plan still gets
-created either way).
+proposal, and you can also click the title directly to rename it yourself.
+The "My plans" button lets you switch between in-progress plans or start a
+new one, and navigating away and coming back resumes exactly where you left
+off — transcript, proposed cards, and confirmed status all included. Needs
+`ANTHROPIC_API_KEY`; without it, the chat shows a plain "isn't configured
+yet" message instead of failing silently (a draft plan still gets created
+either way).
 
 Two entry points lead here beyond just visiting `/planning` directly:
 

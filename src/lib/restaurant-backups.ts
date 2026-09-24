@@ -15,11 +15,18 @@ export type RestaurantBackup = {
   mapsUrl: string;
 };
 
-function cacheKeyFor(neighborhood: string | null, cuisine: string | null): string {
-  return `${(neighborhood ?? "any").trim().toLowerCase()}|${(cuisine ?? "any").trim().toLowerCase()}`;
+function cacheKeyFor(neighborhood: string | null, cuisine: string | null, city: string | null): string {
+  return `${(city ?? "home").trim().toLowerCase()}|${(neighborhood ?? "any").trim().toLowerCase()}|${(cuisine ?? "any").trim().toLowerCase()}`;
 }
 
-async function getPartnerOrigin(): Promise<{ location: LatLng; city: string } | null> {
+// Resolves a search origin — an explicit destination city (e.g. for a trip
+// away from home) takes priority over the partner's own city/neighborhood.
+async function resolveOrigin(city?: string | null): Promise<{ location: LatLng; city: string } | null> {
+  if (city) {
+    const location = await geocode(city);
+    if (location) return { location, city };
+  }
+
   const [row] = await db.select().from(partner).limit(1);
   if (!row?.city) return null;
 
@@ -32,9 +39,10 @@ async function getPartnerOrigin(): Promise<{ location: LatLng; city: string } | 
 async function fetchFreshBackups(params: {
   neighborhood: string | null;
   cuisine: string | null;
+  city?: string | null;
   excludeName?: string;
 }): Promise<RestaurantBackup[]> {
-  const origin = await getPartnerOrigin();
+  const origin = await resolveOrigin(params.city);
   if (!origin) return [];
 
   // Search near the restaurant's own neighborhood when we have one to
@@ -76,9 +84,10 @@ async function fetchFreshBackups(params: {
 export async function getRestaurantBackups(params: {
   neighborhood: string | null;
   cuisine: string | null;
+  city?: string | null;
   excludeName?: string;
 }): Promise<RestaurantBackup[]> {
-  const key = cacheKeyFor(params.neighborhood, params.cuisine);
+  const key = cacheKeyFor(params.neighborhood, params.cuisine, params.city ?? null);
 
   const [cached] = await db
     .select()

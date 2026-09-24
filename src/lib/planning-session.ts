@@ -1,8 +1,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { and, eq, ilike } from "drizzle-orm";
 import { db } from "@/db";
-import { enjoyedPlace, keyDate } from "@/db/schema";
+import { enjoyedPlace, keyDate, preference, preferenceCategoryEnum } from "@/db/schema";
 import { suggestRestaurant } from "@/lib/suggest-restaurant";
-import { suggestHotels } from "@/lib/suggest-hotel";
+import { suggestHotels, enrichHotel, type HotelEnrichment } from "@/lib/suggest-hotel";
 import { enrichRestaurant, type RestaurantEnrichment } from "@/lib/restaurant-enrichment";
 
 export type PlanItemCategory = "stay" | "eat_drink" | "explore" | "other";
@@ -35,7 +36,12 @@ export type ProposedItineraryItem = {
   time: string | null;
   activity: string;
   notes: string | null;
+  // The trip's destination city, if the model has stated one — carried on
+  // every item (not just the first) so a new trip gets it stored, and so
+  // restaurant/hotel lookups search there instead of the user's home city.
+  destination: string | null;
   restaurantInfo: RestaurantEnrichment | null;
+  hotelInfo: HotelEnrichment | null;
 };
 
 export type ProposedItem = ProposedKeyDate | ProposedPlannedActivity | ProposedItineraryItem;
@@ -90,10 +96,20 @@ export const PLANNING_TOOLS: Anthropic.Tool[] = [
           enum: ["stay", "eat_drink", "explore"],
           description: "stay = lodging/hotel, eat_drink = a meal/bar/cafe stop, explore = everything else (sights, activities).",
         },
+        destination: {
+          type: "string",
+          description:
+            "The trip's destination city (e.g. 'Vancouver'). Include this on EVERY itinerary item for a trip, not just the first — it's what makes restaurant_name/hotel_name lookups search the right city instead of the user's home city, and gets saved onto the trip the first time it's confirmed.",
+        },
         restaurant_name: {
           type: "string",
           description:
             "Set this to the specific restaurant/bar/cafe's name when category is eat_drink and you're recommending a real place (not a generic 'find dinner somewhere' placeholder) — this looks up its rating, a short description, and a link to attach to the card.",
+        },
+        hotel_name: {
+          type: "string",
+          description:
+            "Set this to the specific hotel's name when category is stay and you're recommending a real place (from search_hotels or one the user named) — this looks up its rating, a short description, and a booking link to attach to the card.",
         },
       },
       required: ["day", "activity", "category"],
@@ -108,6 +124,10 @@ export const PLANNING_TOOLS: Anthropic.Tool[] = [
       properties: {
         cuisine: { type: "string" },
         neighborhood: { type: "string" },
+        city: {
+          type: "string",
+          description: "The destination city to search near, if this is for a trip away from the user's home city — always set this for a trip, or results will search the wrong place.",
+        },
       },
     },
   },
@@ -121,6 +141,22 @@ export const PLANNING_TOOLS: Anthropic.Tool[] = [
         city: { type: "string", description: "Destination city — required unless the trip destination is already obvious from context." },
         neighborhood: { type: "string" },
       },
+    },
+  },
+  {
+    name: "save_preference",
+    description:
+      "Save something the user tells you about their partner's tastes — a favorite cuisine, a hobby, a neighborhood they love, anything that'll help future planning — as a lasting preference. Call this as soon as the user states one in conversation, don't wait to be asked; it's separate from proposing plan items and doesn't show up as a card. Use 'food' for cuisine/restaurant tastes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          enum: ["band", "color", "flower", "jewelry_style", "food", "hobby", "movie", "other"],
+        },
+        value: { type: "string" },
+      },
+      required: ["category", "value"],
     },
   },
   {
@@ -209,6 +245,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       const time = input.time ? String(input.time) : null;
       const activity = String(input.activity ?? "");
       const notes = input.notes ? String(input.notes) : null;
+      const destination = input.destination ? String(input.destination) : null;
       const category = (
         ["stay", "eat_drink", "explore"].includes(String(input.category))
           ? input.category
@@ -216,19 +253,23 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       ) as PlanItemCategory;
 
       let restaurantInfo: RestaurantEnrichment | null = null;
+      let hotelInfo: HotelEnrichment | null = null;
       if (category === "eat_drink" && input.restaurant_name) {
-        restaurantInfo = await enrichRestaurant(String(input.restaurant_name), null);
+        restaurantInfo = await enrichRestaurant(String(input.restaurant_name), null, destination);
+      } else if (category === "stay" && input.hotel_name) {
+        hotelInfo = await enrichHotel(String(input.hotel_name), destination);
       }
 
       return {
         resultForModel: {
           status: "proposed",
           newTrip: tripId == null,
-          restaurantLookup: input.restaurant_name
-            ? restaurantInfo
-              ? "found — attached rating/link to the card, no need to repeat those details in your reply"
-              : "not found on Places — mention it's not independently verified"
-            : undefined,
+          placeLookup:
+            input.restaurant_name || input.hotel_name
+              ? restaurantInfo || hotelInfo
+                ? "found — attached rating/link to the card, no need to repeat those details in your reply"
+                : "not found on Places — mention it's not independently verified"
+              : undefined,
         },
         proposal: {
           clientId: nextClientId(),
@@ -239,7 +280,9 @@ export async function executeTool(name: string, input: Record<string, unknown>):
           time,
           activity,
           notes,
+          destination,
           restaurantInfo,
+          hotelInfo,
         },
       };
     }
@@ -247,7 +290,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
     case "suggest_restaurant": {
       const cuisine = input.cuisine ? String(input.cuisine) : undefined;
       const neighborhood = input.neighborhood ? String(input.neighborhood) : undefined;
-      const results = await suggestRestaurant({ cuisine, neighborhood });
+      const city = input.city ? String(input.city) : undefined;
+      const results = await suggestRestaurant({ cuisine, neighborhood, city });
 
       return {
         resultForModel:
@@ -256,7 +300,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             : {
                 results: [],
                 message:
-                  "Nothing favorited or found nearby matches that. Tell the user honestly rather than suggesting a specific restaurant that isn't grounded in their data.",
+                  "Nothing favorited or found nearby. Don't explain why (no saved favorites, no Places results) — just ask concisely for what's needed to search, e.g. a neighborhood and a favorite kind of food, in one short question.",
               },
       };
     }
@@ -273,9 +317,32 @@ export async function executeTool(name: string, input: Record<string, unknown>):
             : {
                 results: [],
                 message:
-                  "No enjoyed hotels on file and nothing found nearby (city may be missing, or GOOGLE_PLACES_API_KEY isn't set). Ask the user for a city, or say honestly that you can't find options rather than inventing a hotel.",
+                  "Nothing enjoyed on file and nothing found nearby. Don't explain why — just ask concisely for what's needed, e.g. the destination city, in one short question.",
               },
       };
+    }
+
+    case "save_preference": {
+      const category = (
+        preferenceCategoryEnum.enumValues.includes(String(input.category) as never)
+          ? input.category
+          : "other"
+      ) as (typeof preferenceCategoryEnum.enumValues)[number];
+      const value = String(input.value ?? "").trim();
+      if (!value) return { resultForModel: { status: "error", message: "value is required" } };
+
+      const existing = await db
+        .select({ id: preference.id })
+        .from(preference)
+        .where(and(eq(preference.category, category), ilike(preference.value, value)))
+        .limit(1);
+
+      if (existing.length > 0) {
+        return { resultForModel: { status: "already_saved" } };
+      }
+
+      await db.insert(preference).values({ category, value, strength: "like" });
+      return { resultForModel: { status: "saved" } };
     }
 
     case "set_plan_title": {
@@ -312,9 +379,11 @@ export async function buildSystemPrompt(context?: { occasion?: string; date?: st
 
 Be warm and plain-spoken, like a thoughtful friend helping someone plan, not a form to fill out. Bias toward proposing something concrete quickly rather than asking a lot of clarifying questions first — the whole point of this feature is speed when time is short. One or two quick questions is fine if genuinely needed, but don't stall on details.
 
-You can propose a key date, a planned activity (date night / trip / anniversary-birthday), or a trip itinerary item — these show up for the user to review and confirm themselves; nothing you propose is saved automatically. You can also look up the user's saved favorite restaurants and hotels the user has actually enjoyed staying at (both read-only). Never invent a restaurant, hotel, rating, or review count that isn't in those results — if nothing matches, say so plainly instead of making something up.
+You can propose a key date, a planned activity (date night / trip / anniversary-birthday), or a trip itinerary item — these show up for the user to review and confirm themselves; nothing you propose is saved automatically. You can also look up the user's saved favorite restaurants and hotels the user has actually enjoyed staying at (both read-only). Never invent a restaurant, hotel, rating, or review count that isn't in those results — if nothing matches, say so plainly instead of making something up. When a lookup comes back empty, don't explain the mechanics of why (no saved favorites, no Places results, missing API key) — just ask concisely for whatever's needed to search, in one short question (e.g. "What neighborhood, and what's a favorite kind of food?").
 
-For a trip specifically: first find out if it's tied to an event (anniversary, birthday, just a getaway) and roughly how many nights, then start with lodging — call search_hotels and propose a 'stay' itinerary item before filling in food and activities. When you propose a specific restaurant stop, set restaurant_name on propose_trip_itinerary_item so it gets a real rating/link attached — don't just describe a restaurant in your reply text without proposing it that way.
+For a trip specifically: first find out if it's tied to an event (anniversary, birthday, just a getaway) and roughly how many nights, then start with lodging — call search_hotels and propose a 'stay' itinerary item before filling in food and activities. Always pass the trip's destination as \`city\` to suggest_restaurant/search_hotels and as \`destination\` on propose_trip_itinerary_item (every item, not just the first) — otherwise searches default to the user's own home city instead of where the trip actually is. When you propose a specific restaurant or hotel, set restaurant_name / hotel_name on propose_trip_itinerary_item so it gets a real rating/link attached — don't just describe a place in your reply text without proposing it that way.
+
+Whenever the user tells you something about their partner's tastes in conversation — a favorite cuisine, a neighborhood they love, a hobby — call save_preference right away so it's remembered for next time, even if that's not what they were asking for. Don't wait to be asked.
 
 Once you have enough context to name this plan well (after the first concrete proposal is a good time), call set_plan_title with a short, specific title.${
     enjoyed

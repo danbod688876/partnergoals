@@ -72,3 +72,10 @@ export async function touchPlan(planId: number): Promise<void> {
   await db.update(plan).set({ updatedAt: new Date() }).where(eq(plan.id, planId));
   revalidatePath("/planning");
 }
+
+export async function renamePlan(planId: number, name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  await db.update(plan).set({ name: trimmed, updatedAt: new Date() }).where(eq(plan.id, planId));
+  revalidatePath("/planning");
+}

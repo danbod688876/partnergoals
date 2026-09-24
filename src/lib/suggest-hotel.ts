@@ -2,6 +2,38 @@ import { and, eq, ilike } from "drizzle-orm";
 import { db } from "@/db";
 import { enjoyedPlace, partner } from "@/db/schema";
 import { geocode, nearbySearch, placeDetails } from "@/lib/google-places";
+import { resolveSearchOrigin } from "@/lib/restaurant-enrichment";
+
+export type HotelEnrichment = {
+  rating: number | null;
+  userRatingsTotal: number | null;
+  blurb: string | null;
+  link: string | null;
+  emoji: "🏨";
+};
+
+// Looks up a named hotel via Places and returns rating/blurb/link to attach
+// to a proposed "stay" itinerary item — the same treatment restaurant stops
+// get, via the shared destination-aware origin resolver.
+export async function enrichHotel(name: string, destination?: string | null): Promise<HotelEnrichment | null> {
+  const location = await resolveSearchOrigin(destination);
+  if (!location) return null;
+
+  const results = await nearbySearch({ location, keyword: name, type: "lodging" });
+  const match = results.find((r) => r.name.toLowerCase().includes(name.toLowerCase())) ?? results[0];
+  if (!match) return null;
+
+  const detail = await placeDetails(match.placeId);
+  if (!detail) return null;
+
+  return {
+    rating: detail.rating,
+    userRatingsTotal: detail.userRatingsTotal,
+    blurb: detail.editorialSummary,
+    link: detail.website ?? detail.mapsUrl,
+    emoji: "🏨",
+  };
+}
 
 export type HotelSuggestion = {
   source: "enjoyed" | "places";

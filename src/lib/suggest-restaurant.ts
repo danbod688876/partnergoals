@@ -20,8 +20,9 @@ export type RestaurantSuggestion = {
 export async function suggestRestaurant(params: {
   cuisine?: string;
   neighborhood?: string;
+  city?: string;
 }): Promise<RestaurantSuggestion[]> {
-  const { cuisine, neighborhood } = params;
+  const { cuisine, neighborhood, city } = params;
 
   const conditions = [];
   if (cuisine) conditions.push(ilike(favoriteRestaurant.cuisine, `%${cuisine}%`));
@@ -46,6 +47,7 @@ export async function suggestRestaurant(params: {
   const backups = await getRestaurantBackups({
     neighborhood: neighborhood ?? null,
     cuisine: cuisine ?? null,
+    city: city ?? null,
   });
 
   return backups.map((b) => ({

@@ -73,8 +73,12 @@ export async function confirmNewTripWithItineraryItem(item: {
   time: string | null;
   activity: string;
   notes: string | null;
+  destination?: string | null;
 }): Promise<{ tripId: number; itemId: number }> {
-  const [tripRow] = await db.insert(trip).values({}).returning({ id: trip.id });
+  const [tripRow] = await db
+    .insert(trip)
+    .values({ destination: item.destination ?? null })
+    .returning({ id: trip.id });
 
   await db.insert(plannedActivity).values({
     type: "trip",

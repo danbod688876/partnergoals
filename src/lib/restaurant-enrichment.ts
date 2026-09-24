@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { partner } from "@/db/schema";
-import { geocode, nearbySearch, placeDetails } from "@/lib/google-places";
+import { geocode, nearbySearch, placeDetails, type LatLng } from "@/lib/google-places";
 
 export type RestaurantEnrichment = {
   rating: number | null;
@@ -37,16 +37,29 @@ function emojiFor(text: string): string {
   return "🍽️";
 }
 
+// Resolves where to search — an explicit destination (e.g. a trip city)
+// takes priority over the partner's own city/neighborhood, since a proposed
+// stop is often somewhere the user doesn't live.
+export async function resolveSearchOrigin(destination?: string | null): Promise<LatLng | null> {
+  if (destination) {
+    const location = await geocode(destination);
+    if (location) return location;
+  }
+
+  const [partnerRow] = await db.select().from(partner).limit(1);
+  const address = [partnerRow?.neighborhood, partnerRow?.city].filter(Boolean).join(", ");
+  return geocode(address);
+}
+
 // Looks up a named restaurant via Places and returns rating/blurb/link/emoji
 // to attach to a proposed itinerary stop — used when the Planning Session
 // proposes a specific restaurant, not the general suggest_restaurant lookup.
 export async function enrichRestaurant(
   name: string,
-  cuisineHint?: string | null
+  cuisineHint?: string | null,
+  destination?: string | null
 ): Promise<RestaurantEnrichment | null> {
-  const [partnerRow] = await db.select().from(partner).limit(1);
-  const address = [partnerRow?.neighborhood, partnerRow?.city].filter(Boolean).join(", ");
-  const location = await geocode(address);
+  const location = await resolveSearchOrigin(destination);
   if (!location) return null;
 
   const results = await nearbySearch({ location, keyword: name });
