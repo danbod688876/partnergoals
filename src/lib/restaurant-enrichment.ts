@@ -37,10 +37,20 @@ function emojiFor(text: string): string {
   return "🍽️";
 }
 
-// Resolves where to search — an explicit destination (e.g. a trip city)
-// takes priority over the partner's own city/neighborhood, since a proposed
-// stop is often somewhere the user doesn't live.
-export async function resolveSearchOrigin(destination?: string | null): Promise<LatLng | null> {
+// Resolves where to search — a confirmed/proposed hotel for this trip takes
+// priority (searching near where the user will actually be staying, not
+// just the general city), then an explicit destination (e.g. a trip city),
+// then the partner's own city/neighborhood, since a proposed stop is often
+// somewhere the user doesn't live.
+export async function resolveSearchOrigin(
+  destination?: string | null,
+  nearHotelName?: string | null
+): Promise<LatLng | null> {
+  if (nearHotelName && destination) {
+    const location = await geocode(`${nearHotelName}, ${destination}`);
+    if (location) return location;
+  }
+
   if (destination) {
     const location = await geocode(destination);
     if (location) return location;
@@ -57,9 +67,10 @@ export async function resolveSearchOrigin(destination?: string | null): Promise<
 export async function enrichRestaurant(
   name: string,
   cuisineHint?: string | null,
-  destination?: string | null
+  destination?: string | null,
+  nearHotelName?: string | null
 ): Promise<RestaurantEnrichment | null> {
-  const location = await resolveSearchOrigin(destination);
+  const location = await resolveSearchOrigin(destination, nearHotelName);
   if (!location) return null;
 
   const results = await nearbySearch({ location, keyword: name });

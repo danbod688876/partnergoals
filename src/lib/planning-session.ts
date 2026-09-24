@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { and, eq, ilike } from "drizzle-orm";
 import { db } from "@/db";
-import { enjoyedPlace, favoriteRestaurant, keyDate, preference, preferenceCategoryEnum } from "@/db/schema";
+import { enjoyedPlace, favoriteRestaurant, keyDate, planItem, preference, preferenceCategoryEnum } from "@/db/schema";
 import { suggestRestaurant } from "@/lib/suggest-restaurant";
 import { suggestHotels, enrichHotel, type HotelEnrichment } from "@/lib/suggest-hotel";
 import { enrichRestaurant, type RestaurantEnrichment } from "@/lib/restaurant-enrichment";
@@ -245,6 +245,58 @@ async function findFavoriteRestaurantByName(name: string): Promise<FavoriteResta
   return { id: row.id, name: row.name, platform: row.platform, platformVenueId: row.platformVenueId };
 }
 
+type ExistingPlanItem = { status: "proposed" | "confirmed"; payload: ProposedItem };
+
+// Powers both the "don't re-propose this" system-prompt context and the
+// server-side dedup guards below — a single source of truth for what's
+// already on this plan's board, since plan_message history is plain text
+// and carries no memory of past tool calls across turns.
+async function existingItemsForPlan(planId: number): Promise<ExistingPlanItem[]> {
+  const rows = await db.select().from(planItem).where(eq(planItem.planId, planId)).orderBy(planItem.createdAt);
+  return rows.map((r) => ({ status: r.status, payload: JSON.parse(r.payloadJson) as ProposedItem }));
+}
+
+// If this trip already has a hotel picked (proposed or confirmed, via
+// propose_hotel_stay), subsequent eat_drink/explore searches should anchor
+// to it instead of just the city — "nearby" ought to mean near where the
+// user will actually be staying. Matches on destination (case-insensitive)
+// so a plan spanning multiple trips doesn't cross-contaminate; picks the
+// most recently proposed matching hotel.
+async function resolveHotelAnchor(planId: number, destination?: string | null): Promise<string | null> {
+  const items = await existingItemsForPlan(planId);
+  const hotelStays = items.filter(
+    (i): i is ExistingPlanItem & { payload: ProposedHotelStay } => i.payload.kind === "hotel_stay"
+  );
+  const matching = destination
+    ? hotelStays.filter((i) => i.payload.destination.toLowerCase() === destination.toLowerCase())
+    : hotelStays;
+
+  const chosen = matching[matching.length - 1];
+  return chosen ? chosen.payload.name : null;
+}
+
+export async function summarizeExistingItems(planId: number): Promise<string | null> {
+  const items = await existingItemsForPlan(planId);
+  if (items.length === 0) return null;
+
+  const lines = items.map(({ status, payload }) => {
+    switch (payload.kind) {
+      case "key_date":
+        return `- [${status}] Key date: ${payload.label} (${payload.date})`;
+      case "planned_activity":
+        return `- [${status}] Planned activity: ${payload.activityType}${payload.targetDate ? ` (${payload.targetDate})` : ""}`;
+      case "itinerary_item":
+        return `- [${status}] Day ${payload.day} ${payload.category}: ${payload.activity}`;
+      case "hotel_stay":
+        return `- [${status}] Hotel stay: ${payload.name}, ${payload.destination} (${payload.checkIn} to ${payload.checkOut})`;
+      default:
+        return null;
+    }
+  });
+
+  return lines.filter((l): l is string => l !== null).join("\n");
+}
+
 let clientIdCounter = 0;
 function nextClientId(): string {
   clientIdCounter += 1;
@@ -261,7 +313,11 @@ export type ToolExecutionResult = {
   planTitle?: string;
 };
 
-export async function executeTool(name: string, input: Record<string, unknown>): Promise<ToolExecutionResult> {
+export async function executeTool(
+  name: string,
+  input: Record<string, unknown>,
+  planId: number
+): Promise<ToolExecutionResult> {
   switch (name) {
     case "propose_key_date": {
       const label = String(input.label ?? "");
@@ -294,6 +350,20 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       const targetDate = input.target_date ? String(input.target_date) : null;
       const notes = input.notes ? String(input.notes) : null;
 
+      const existing = await existingItemsForPlan(planId);
+      const duplicate = existing.find(
+        ({ payload }) =>
+          payload.kind === "planned_activity" && payload.activityType === activityType && payload.targetDate === targetDate
+      );
+      if (duplicate) {
+        return {
+          resultForModel: {
+            status: "duplicate",
+            message: "This planned activity is already on the board — don't propose it again, just refer to it.",
+          },
+        };
+      }
+
       return {
         resultForModel: { status: "proposed" },
         proposal: { clientId: nextClientId(), kind: "planned_activity", category: "other", activityType, targetDate, notes },
@@ -313,6 +383,24 @@ export async function executeTool(name: string, input: Record<string, unknown>):
           : "explore"
       ) as PlanItemCategory;
 
+      const existingForDupe = await existingItemsForPlan(planId);
+      const normalizedActivity = activity.trim().toLowerCase();
+      const duplicateItem = existingForDupe.find(
+        ({ payload }) =>
+          payload.kind === "itinerary_item" &&
+          payload.day === day &&
+          payload.category === category &&
+          payload.activity.trim().toLowerCase() === normalizedActivity
+      );
+      if (duplicateItem) {
+        return {
+          resultForModel: {
+            status: "duplicate",
+            message: "This itinerary item is already on the board — don't propose it again, just refer to it.",
+          },
+        };
+      }
+
       let restaurantInfo: RestaurantEnrichment | null = null;
       let hotelInfo: HotelEnrichment | null = null;
       let favorite: FavoriteRestaurantRef | null = null;
@@ -320,7 +408,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         const name = String(input.restaurant_name);
         favorite = await findFavoriteRestaurantByName(name);
         if (!favorite) {
-          restaurantInfo = await enrichRestaurant(name, null, destination);
+          const hotelAnchor = await resolveHotelAnchor(planId, destination);
+          restaurantInfo = await enrichRestaurant(name, null, destination, hotelAnchor);
         }
       } else if (category === "stay" && input.hotel_name) {
         hotelInfo = await enrichHotel(String(input.hotel_name), destination);
@@ -361,7 +450,8 @@ export async function executeTool(name: string, input: Record<string, unknown>):
       const cuisine = input.cuisine ? String(input.cuisine) : undefined;
       const neighborhood = input.neighborhood ? String(input.neighborhood) : undefined;
       const city = input.city ? String(input.city) : undefined;
-      const results = await suggestRestaurant({ cuisine, neighborhood, city });
+      const nearHotelName = await resolveHotelAnchor(planId, city ?? null);
+      const results = await suggestRestaurant({ cuisine, neighborhood, city, nearHotelName });
 
       return {
         resultForModel:
@@ -413,7 +503,28 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         };
       }
 
-      const proposals: ProposedHotelStay[] = candidates.map((c) => ({
+      const existingHotels = await existingItemsForPlan(planId);
+      const freshCandidates = candidates.filter(
+        (c) =>
+          !existingHotels.some(
+            ({ payload }) =>
+              payload.kind === "hotel_stay" &&
+              payload.destination === destination &&
+              payload.checkIn === checkIn &&
+              payload.checkOut === checkOut &&
+              payload.name === c.name
+          )
+      );
+      if (freshCandidates.length === 0) {
+        return {
+          resultForModel: {
+            status: "duplicate",
+            message: "Already proposed these hotel candidates for these dates — don't call this again, point the user at the existing cards instead.",
+          },
+        };
+      }
+
+      const proposals: ProposedHotelStay[] = freshCandidates.map((c) => ({
         clientId: nextClientId(),
         kind: "hotel_stay",
         category: "stay",
@@ -489,8 +600,12 @@ async function enjoyedPlacesSummary(): Promise<string | null> {
     .join("; ");
 }
 
-export async function buildSystemPrompt(context?: { occasion?: string; date?: string }): Promise<string> {
+export async function buildSystemPrompt(
+  context?: { occasion?: string; date?: string },
+  planId?: number
+): Promise<string> {
   const enjoyed = await enjoyedPlacesSummary();
+  const existingItemsSummary = planId ? await summarizeExistingItems(planId) : null;
 
   const base = `You're helping plan something for the user's partner, inside PartnerGoals — a private, warm, personal app (never clinical or corporate in tone).
 
@@ -510,9 +625,12 @@ Once you have enough context to name this plan well (after the first concrete pr
 
 Keep replies short — a sentence or two plus whatever you proposed, not a long message.`;
 
-  if (context?.occasion || context?.date) {
-    return `${base}\n\nContext for this session: the user just added an upcoming occasion — ${context.occasion ?? "an important date"}${context.date ? ` on ${context.date}` : ""} — and it's coming up soon. Open by acknowledging that directly and proposing a concrete next step (e.g. a restaurant suggestion, an activity, or an itinerary idea) right away rather than asking what they want first.`;
-  }
+  const withContext =
+    context?.occasion || context?.date
+      ? `${base}\n\nContext for this session: the user just added an upcoming occasion — ${context.occasion ?? "an important date"}${context.date ? ` on ${context.date}` : ""} — and it's coming up soon. Open by acknowledging that directly and proposing a concrete next step (e.g. a restaurant suggestion, an activity, or an itinerary idea) right away rather than asking what they want first.`
+      : base;
 
-  return base;
+  if (!existingItemsSummary) return withContext;
+
+  return `${withContext}\n\nAlready proposed or confirmed on this plan's board — do NOT call a propose_* tool for any of these again, even across later messages in this conversation or if the user asks to see them again; just refer to them naturally in your reply instead:\n${existingItemsSummary}`;
 }

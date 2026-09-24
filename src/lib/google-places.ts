@@ -69,7 +69,11 @@ async function safeFetchJson(url: string): Promise<GoogleApiResponse | null> {
 
 export async function geocode(address: string): Promise<LatLng | null> {
   const key = apiKey();
-  if (!key || !address.trim()) return null;
+  if (!key) {
+    console.warn("geocode() called with no GOOGLE_PLACES_API_KEY set — returning null.");
+    return null;
+  }
+  if (!address.trim()) return null;
 
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${key}`;
   const json = await safeFetchJson(url);
@@ -86,7 +90,10 @@ export async function nearbySearch(params: {
   type?: "restaurant" | "lodging";
 }): Promise<NearbyPlace[]> {
   const key = apiKey();
-  if (!key) return [];
+  if (!key) {
+    console.warn("nearbySearch() called with no GOOGLE_PLACES_API_KEY set — returning [].");
+    return [];
+  }
 
   const { location, radiusMeters = 3200, keyword, type = "restaurant" } = params;
   const searchParams = new URLSearchParams({
@@ -99,6 +106,11 @@ export async function nearbySearch(params: {
 
   const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?${searchParams}`;
   const json = await safeFetchJson(url);
+  if (json === null) {
+    console.warn(`nearbySearch() request failed outright (network error or non-OK status) for keyword=${keyword ?? "(none)"} near ${location.lat},${location.lng}.`);
+  } else if ((json.results ?? []).length === 0) {
+    console.warn(`nearbySearch() got a valid response but zero results for keyword=${keyword ?? "(none)"}, type=${type}, radius=${radiusMeters}m near ${location.lat},${location.lng} (status: ${json.status ?? "unknown"}).`);
+  }
   const results = json?.results ?? [];
 
   return results.map((r: RawPlace) => ({

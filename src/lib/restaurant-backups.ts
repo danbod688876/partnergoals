@@ -15,8 +15,13 @@ export type RestaurantBackup = {
   mapsUrl: string;
 };
 
-function cacheKeyFor(neighborhood: string | null, cuisine: string | null, city: string | null): string {
-  return `${(city ?? "home").trim().toLowerCase()}|${(neighborhood ?? "any").trim().toLowerCase()}|${(cuisine ?? "any").trim().toLowerCase()}`;
+function cacheKeyFor(
+  neighborhood: string | null,
+  cuisine: string | null,
+  city: string | null,
+  nearHotelName?: string | null
+): string {
+  return `${(city ?? "home").trim().toLowerCase()}|${(neighborhood ?? "any").trim().toLowerCase()}|${(cuisine ?? "any").trim().toLowerCase()}|${(nearHotelName ?? "any").trim().toLowerCase()}`;
 }
 
 // Resolves a search origin — an explicit destination city (e.g. for a trip
@@ -41,26 +46,58 @@ async function fetchFreshBackups(params: {
   cuisine: string | null;
   city?: string | null;
   excludeName?: string;
+  // A confirmed/proposed hotel for this trip — when set, search near it
+  // instead of just the general city/neighborhood, since "nearby" should
+  // mean "near where you're staying" once a hotel is picked.
+  nearHotelName?: string | null;
 }): Promise<RestaurantBackup[]> {
   const origin = await resolveOrigin(params.city);
   if (!origin) return [];
 
-  // Search near the restaurant's own neighborhood when we have one to
-  // geocode; otherwise fall back to the partner's general area.
-  const searchOrigin = params.neighborhood
-    ? (await geocode(`${params.neighborhood}, ${origin.city}`)) ?? origin.location
-    : origin.location;
+  // Anchor to the hotel first, then the restaurant's own neighborhood if we
+  // have one to geocode, otherwise fall back to the partner's general area.
+  const searchOrigin = params.nearHotelName
+    ? (await geocode(`${params.nearHotelName}, ${origin.city}`)) ?? origin.location
+    : params.neighborhood
+      ? (await geocode(`${params.neighborhood}, ${origin.city}`)) ?? origin.location
+      : origin.location;
 
-  const results = await nearbySearch({
+  // Once anchored to a specific hotel, "nearby" should mean walkable, not
+  // city-wide — a tighter radius than the general city/neighborhood search.
+  const baseRadius = params.nearHotelName ? 2000 : 5000;
+
+  let results = await nearbySearch({
     location: searchOrigin,
     keyword: params.cuisine ?? undefined,
+    radiusMeters: baseRadius,
   });
 
-  const candidates = results
+  // A cuisine-narrowed search within a fixed radius of a geocode pin can
+  // come back empty even in a dense, restaurant-rich city if the pin sits a
+  // bit off from the actual core — widen once before giving up.
+  if (results.length === 0 && params.cuisine) {
+    results = await nearbySearch({
+      location: searchOrigin,
+      keyword: params.cuisine,
+      radiusMeters: baseRadius * 2,
+    });
+  }
+
+  let candidates = results
     .filter((r) => !params.excludeName || r.name.toLowerCase() !== params.excludeName.toLowerCase())
-    .filter((r) => r.rating != null)
-    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.userRatingsTotal ?? 0) - (a.userRatingsTotal ?? 0))
-    .slice(0, MAX_RESULTS);
+    .sort(
+      (a, b) =>
+        (b.rating ?? -1) - (a.rating ?? -1) || (b.userRatingsTotal ?? 0) - (a.userRatingsTotal ?? 0)
+    );
+
+  // "Filter for highly rated options" once a hotel's picked — but don't let
+  // that filter zero out a real, if unrated/lower-rated, nearby result.
+  if (params.nearHotelName) {
+    const highlyRated = candidates.filter((r) => (r.rating ?? 0) >= 4.0);
+    if (highlyRated.length > 0) candidates = highlyRated;
+  }
+
+  candidates = candidates.slice(0, MAX_RESULTS);
 
   const detailed = await Promise.all(candidates.map((c) => placeDetails(c.placeId)));
 
@@ -86,8 +123,9 @@ export async function getRestaurantBackups(params: {
   cuisine: string | null;
   city?: string | null;
   excludeName?: string;
+  nearHotelName?: string | null;
 }): Promise<RestaurantBackup[]> {
-  const key = cacheKeyFor(params.neighborhood, params.cuisine, params.city ?? null);
+  const key = cacheKeyFor(params.neighborhood, params.cuisine, params.city ?? null, params.nearHotelName);
 
   const [cached] = await db
     .select()

@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
   }
 
   const client = new Anthropic({ apiKey });
-  const system = await buildSystemPrompt(context);
+  const system = await buildSystemPrompt(context, planId);
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -97,7 +97,8 @@ export async function POST(req: NextRequest) {
             if (block.type !== "tool_use") continue;
             const { resultForModel, proposal, proposals, planTitle } = await executeTool(
               block.name,
-              block.input as Record<string, unknown>
+              block.input as Record<string, unknown>,
+              planId
             );
 
             for (const item of proposals ?? (proposal ? [proposal] : [])) {

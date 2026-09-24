@@ -252,6 +252,22 @@ conversation (a favorite cuisine, a hobby), so it's remembered in
 lookup comes back empty, it's told to ask concisely for what it needs
 (a neighborhood, a favorite cuisine) rather than explain the search mechanics.
 
+Because `plan_message` only stores plain text (not the model's tool calls),
+a fresh request has no built-in memory of what it already proposed earlier in
+the same conversation — so the system prompt is rebuilt each turn with a
+live summary of everything already on the plan's board (`plan_item`,
+proposed or confirmed), telling the model not to re-propose any of it. As a
+backstop, `propose_planned_activity`, `propose_trip_itinerary_item`, and
+`propose_hotel_stay` also dedupe server-side against that same table before
+creating a new card, mirroring the existing `propose_key_date` duplicate
+check. Once a hotel's been proposed or confirmed for a trip (via
+`propose_hotel_stay`), subsequent `suggest_restaurant` calls and
+`propose_trip_itinerary_item` eat_drink lookups automatically search near
+that hotel (geocoding "`<hotel name>`, `<destination>`" instead of just the
+city) within a tighter, walkable radius, and prefer results rated 4.0+ when
+there are enough of them — "nearby" means near where you're actually
+staying, not just somewhere in the same city.
+
 Unlike earlier versions of this feature, the chat is **not** ephemeral: each
 conversation is a named, saved **Plan** (`plan` / `plan_message` / `plan_item`
 tables) — the assistant names it itself via a `set_plan_title` tool once

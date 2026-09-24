@@ -21,8 +21,11 @@ export async function suggestRestaurant(params: {
   cuisine?: string;
   neighborhood?: string;
   city?: string;
+  // A confirmed/proposed hotel for this trip — search near it, filtered for
+  // highly-rated options, instead of just the general city.
+  nearHotelName?: string | null;
 }): Promise<RestaurantSuggestion[]> {
-  const { cuisine, neighborhood, city } = params;
+  const { cuisine, neighborhood, city, nearHotelName } = params;
 
   const conditions = [];
   if (cuisine) conditions.push(ilike(favoriteRestaurant.cuisine, `%${cuisine}%`));
@@ -48,6 +51,7 @@ export async function suggestRestaurant(params: {
     neighborhood: neighborhood ?? null,
     cuisine: cuisine ?? null,
     city: city ?? null,
+    nearHotelName,
   });
 
   return backups.map((b) => ({
