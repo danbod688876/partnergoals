@@ -3,6 +3,8 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { Card, EmptyState, inputClass, labelClass, primaryButtonClass, secondaryButtonClass, ghostLinkClass } from "@/components/ui";
 import type { PlanItemCategory, ProposedItem } from "@/lib/planning-session";
+import { OpenTableWidget } from "@/components/OpenTableWidget";
+import { BookingButton } from "@/components/BookingButton";
 import { confirmKeyDate, updateConfirmedKeyDate } from "@/app/dates/actions";
 import {
   confirmItineraryItem,
@@ -11,12 +13,12 @@ import {
   updateConfirmedItineraryItem,
   updateConfirmedPlannedActivity,
 } from "@/app/upcoming/actions";
-import { syncPlanItem, deletePlanItem } from "./actions";
+import { syncPlanItem, deletePlanItem, confirmHotelStay, updateConfirmedHotelStay } from "./actions";
 
 export type PlanItem = ProposedItem & {
   status: "proposed" | "confirmed";
   dbId: number;
-  confirmedRecordType?: "key_date" | "planned_activity" | "trip_itinerary_item";
+  confirmedRecordType?: "key_date" | "planned_activity" | "trip_itinerary_item" | "hotel_stay";
   confirmedRecordId?: number;
 };
 
@@ -96,6 +98,21 @@ export function PlanPanel({
         });
         recordType = "planned_activity";
         recordId = row.id;
+      } else if (item.kind === "hotel_stay") {
+        const row = await confirmHotelStay({
+          tripId: item.tripId ?? confirmedTripId,
+          destination: item.destination,
+          checkIn: item.checkIn,
+          checkOut: item.checkOut,
+          name: item.name,
+          price: item.price,
+          currency: item.currency,
+          rating: item.rating,
+          reviewCount: item.reviewCount,
+          bookingUrl: item.bookingUrl,
+        });
+        recordType = "hotel_stay";
+        recordId = row.id;
       } else {
         const effectiveTripId = item.tripId ?? confirmedTripId;
         if (effectiveTripId == null) {
@@ -163,6 +180,12 @@ export function PlanPanel({
         time: item.time,
         activity: item.activity,
         notes: item.notes,
+      });
+    } else if (item.kind === "hotel_stay" && item.confirmedRecordId) {
+      await updateConfirmedHotelStay(item.confirmedRecordId, {
+        checkIn: item.checkIn,
+        checkOut: item.checkOut,
+        name: item.name,
       });
     }
     await syncPlanItem(item.dbId, { payloadJson: JSON.stringify(item) });
@@ -294,18 +317,54 @@ function ItemView({ item }: { item: PlanItem }) {
     );
   }
 
+  if (item.kind === "hotel_stay") {
+    return (
+      <div>
+        <span className="font-medium text-ink-800">🏨 {item.name}</span>
+        <p className="mt-1 text-sm text-ink-400">
+          {formatDateLabel(item.checkIn)} – {formatDateLabel(item.checkOut)} · {item.destination}
+        </p>
+        <div className="mt-3 space-y-1.5 rounded-lg bg-cream-100/50 p-3 text-sm">
+          <p className="text-ink-600">
+            {[
+              item.price != null ? `${item.currency ?? "$"}${item.price}/night` : null,
+              item.rating != null ? `${item.rating}★` : null,
+              item.reviewCount != null ? `${item.reviewCount} reviews` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "No pricing details returned"}
+          </p>
+          {item.bookingUrl && <BookingButton href={item.bookingUrl} label="View / book" />}
+        </div>
+      </div>
+    );
+  }
+
+  const favorite = item.favoriteRestaurant;
   const place = item.restaurantInfo ?? item.hotelInfo;
   const isHotel = item.category === "stay" && item.hotelInfo != null;
 
   return (
     <div>
       <span className="font-medium text-ink-800">
+        {favorite && <span className="mr-1.5">⭐</span>}
         {place && <span className="mr-1.5">{place.emoji}</span>}
         Day {item.day}
         {item.time ? ` · ${item.time}` : ""}
       </span>
       <p className="mt-1 text-sm text-ink-600">{item.activity}</p>
       {item.notes && <p className="mt-1 text-sm text-ink-400">{item.notes}</p>}
+
+      {favorite && (
+        <div className="mt-3 space-y-2 rounded-lg bg-cream-100/50 p-3">
+          <p className="text-sm text-ink-400">One of your favorites — reserve directly:</p>
+          {favorite.platform === "opentable" ? (
+            <OpenTableWidget venueId={favorite.platformVenueId} name={favorite.name} />
+          ) : (
+            <BookingButton href={`/restaurants/${favorite.id}`} label="View restaurant" />
+          )}
+        </div>
+      )}
 
       {place && (
         <div className="mt-3 space-y-1.5 rounded-lg bg-cream-100/50 p-3 text-sm">
@@ -364,6 +423,42 @@ function EditForm({
             value={draft.date}
             onChange={(e) => setDraft({ ...draft, date: e.target.value })}
           />
+        </div>
+        <EditActions onSave={() => onSave(draft)} onCancel={onCancel} />
+      </div>
+    );
+  }
+
+  if (draft.kind === "hotel_stay") {
+    return (
+      <div className="space-y-3">
+        <div>
+          <label className={labelClass}>Hotel name</label>
+          <input
+            className={inputClass}
+            value={draft.name}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass}>Check in</label>
+            <input
+              type="date"
+              className={inputClass}
+              value={draft.checkIn}
+              onChange={(e) => setDraft({ ...draft, checkIn: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Check out</label>
+            <input
+              type="date"
+              className={inputClass}
+              value={draft.checkOut}
+              onChange={(e) => setDraft({ ...draft, checkOut: e.target.value })}
+            />
+          </div>
         </div>
         <EditActions onSave={() => onSave(draft)} onCancel={onCancel} />
       </div>

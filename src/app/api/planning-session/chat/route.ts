@@ -95,23 +95,23 @@ export async function POST(req: NextRequest) {
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
           for (const block of final.content) {
             if (block.type !== "tool_use") continue;
-            const { resultForModel, proposal, planTitle } = await executeTool(
+            const { resultForModel, proposal, proposals, planTitle } = await executeTool(
               block.name,
               block.input as Record<string, unknown>
             );
 
-            if (proposal) {
+            for (const item of proposals ?? (proposal ? [proposal] : [])) {
               const [itemRow] = await db
                 .insert(planItem)
                 .values({
                   planId,
-                  clientId: proposal.clientId,
-                  category: proposal.category,
+                  clientId: item.clientId,
+                  category: item.category,
                   status: "proposed",
-                  payloadJson: JSON.stringify(proposal),
+                  payloadJson: JSON.stringify(item),
                 })
                 .returning({ id: planItem.id });
-              controller.enqueue(encodeLine({ type: "proposal", item: proposal, dbId: itemRow.id }));
+              controller.enqueue(encodeLine({ type: "proposal", item, dbId: itemRow.id }));
             }
 
             if (planTitle) {

@@ -1,10 +1,11 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { and, eq, ilike } from "drizzle-orm";
 import { db } from "@/db";
-import { enjoyedPlace, keyDate, preference, preferenceCategoryEnum } from "@/db/schema";
+import { enjoyedPlace, favoriteRestaurant, keyDate, preference, preferenceCategoryEnum } from "@/db/schema";
 import { suggestRestaurant } from "@/lib/suggest-restaurant";
 import { suggestHotels, enrichHotel, type HotelEnrichment } from "@/lib/suggest-hotel";
 import { enrichRestaurant, type RestaurantEnrichment } from "@/lib/restaurant-enrichment";
+import { searchHotelsViaSerpApi } from "@/lib/serpapi-hotels";
 
 export type PlanItemCategory = "stay" | "eat_drink" | "explore" | "other";
 
@@ -27,6 +28,13 @@ export type ProposedPlannedActivity = {
   notes: string | null;
 };
 
+export type FavoriteRestaurantRef = {
+  id: number;
+  name: string;
+  platform: "opentable" | "resy" | "other";
+  platformVenueId: string | null;
+};
+
 export type ProposedItineraryItem = {
   clientId: string;
   kind: "itinerary_item";
@@ -40,11 +48,36 @@ export type ProposedItineraryItem = {
   // every item (not just the first) so a new trip gets it stored, and so
   // restaurant/hotel lookups search there instead of the user's home city.
   destination: string | null;
+  // Set instead of restaurantInfo when restaurant_name matches an existing
+  // FavoriteRestaurant — the panel renders the real booking widget (or a
+  // link to its detail page) for these rather than a live Places lookup.
+  favoriteRestaurant: FavoriteRestaurantRef | null;
   restaurantInfo: RestaurantEnrichment | null;
   hotelInfo: HotelEnrichment | null;
 };
 
-export type ProposedItem = ProposedKeyDate | ProposedPlannedActivity | ProposedItineraryItem;
+// A real, priced hotel candidate from SerpApi's Google Hotels engine — a
+// separate concept from a generic "stay" itinerary item (which just gets a
+// Places rating, no price). tripId is null until confirmed, same pattern as
+// ProposedItineraryItem: the frontend resolves it to whichever trip is
+// active in this session.
+export type ProposedHotelStay = {
+  clientId: string;
+  kind: "hotel_stay";
+  category: "stay";
+  tripId: number | null;
+  destination: string;
+  checkIn: string;
+  checkOut: string;
+  name: string;
+  price: number | null;
+  currency: string | null;
+  rating: number | null;
+  reviewCount: number | null;
+  bookingUrl: string | null;
+};
+
+export type ProposedItem = ProposedKeyDate | ProposedPlannedActivity | ProposedItineraryItem | ProposedHotelStay;
 
 export const PLANNING_TOOLS: Anthropic.Tool[] = [
   {
@@ -144,6 +177,20 @@ export const PLANNING_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "propose_hotel_stay",
+    description:
+      "Search real, currently-priced hotel candidates for a trip via Google Hotels and propose the top few as cards — the user picks which one (if any) to confirm. Needs concrete check-in/check-out dates; if you don't have those yet, ask, or use search_hotels first for a dateless, price-free look at options. Never invent a hotel, price, or rating — only what's actually returned.",
+    input_schema: {
+      type: "object",
+      properties: {
+        destination: { type: "string" },
+        check_in: { type: "string", description: "YYYY-MM-DD" },
+        check_out: { type: "string", description: "YYYY-MM-DD" },
+      },
+      required: ["destination", "check_in", "check_out"],
+    },
+  },
+  {
     name: "save_preference",
     description:
       "Save something the user tells you about their partner's tastes — a favorite cuisine, a hobby, a neighborhood they love, anything that'll help future planning — as a lasting preference. Call this as soon as the user states one in conversation, don't wait to be asked; it's separate from proposing plan items and doesn't show up as a card. Use 'food' for cuisine/restaurant tastes.",
@@ -188,6 +235,16 @@ async function findDuplicateKeyDate(label: string, date: string) {
   );
 }
 
+async function findFavoriteRestaurantByName(name: string): Promise<FavoriteRestaurantRef | null> {
+  const [row] = await db
+    .select()
+    .from(favoriteRestaurant)
+    .where(ilike(favoriteRestaurant.name, name))
+    .limit(1);
+  if (!row) return null;
+  return { id: row.id, name: row.name, platform: row.platform, platformVenueId: row.platformVenueId };
+}
+
 let clientIdCounter = 0;
 function nextClientId(): string {
   clientIdCounter += 1;
@@ -197,6 +254,10 @@ function nextClientId(): string {
 export type ToolExecutionResult = {
   resultForModel: unknown;
   proposal?: ProposedItem;
+  // A tool that can surface several real, distinct candidates from one call
+  // (e.g. propose_hotel_stay) uses this instead of `proposal` — each becomes
+  // its own card, individually confirmable.
+  proposals?: ProposedItem[];
   planTitle?: string;
 };
 
@@ -254,8 +315,13 @@ export async function executeTool(name: string, input: Record<string, unknown>):
 
       let restaurantInfo: RestaurantEnrichment | null = null;
       let hotelInfo: HotelEnrichment | null = null;
+      let favorite: FavoriteRestaurantRef | null = null;
       if (category === "eat_drink" && input.restaurant_name) {
-        restaurantInfo = await enrichRestaurant(String(input.restaurant_name), null, destination);
+        const name = String(input.restaurant_name);
+        favorite = await findFavoriteRestaurantByName(name);
+        if (!favorite) {
+          restaurantInfo = await enrichRestaurant(name, null, destination);
+        }
       } else if (category === "stay" && input.hotel_name) {
         hotelInfo = await enrichHotel(String(input.hotel_name), destination);
       }
@@ -264,8 +330,11 @@ export async function executeTool(name: string, input: Record<string, unknown>):
         resultForModel: {
           status: "proposed",
           newTrip: tripId == null,
+          matchedFavorite: favorite
+            ? "this is one of the user's saved favorites — its booking widget/link will show on the card, no need to describe reservation details yourself"
+            : undefined,
           placeLookup:
-            input.restaurant_name || input.hotel_name
+            !favorite && (input.restaurant_name || input.hotel_name)
               ? restaurantInfo || hotelInfo
                 ? "found — attached rating/link to the card, no need to repeat those details in your reply"
                 : "not found on Places — mention it's not independently verified"
@@ -281,6 +350,7 @@ export async function executeTool(name: string, input: Record<string, unknown>):
           activity,
           notes,
           destination,
+          favoriteRestaurant: favorite,
           restaurantInfo,
           hotelInfo,
         },
@@ -319,6 +389,53 @@ export async function executeTool(name: string, input: Record<string, unknown>):
                 message:
                   "Nothing enjoyed on file and nothing found nearby. Don't explain why — just ask concisely for what's needed, e.g. the destination city, in one short question.",
               },
+      };
+    }
+
+    case "propose_hotel_stay": {
+      const destination = String(input.destination ?? "").trim();
+      const checkIn = String(input.check_in ?? "");
+      const checkOut = String(input.check_out ?? "");
+      if (!destination || !checkIn || !checkOut) {
+        return {
+          resultForModel: { status: "error", message: "destination, check_in, and check_out are all required" },
+        };
+      }
+
+      const candidates = await searchHotelsViaSerpApi({ destination, checkIn, checkOut });
+      if (candidates.length === 0) {
+        return {
+          resultForModel: {
+            results: [],
+            message:
+              "No hotels found (SERP_API_KEY may not be set, or nothing matched). Say so honestly rather than inventing a hotel.",
+          },
+        };
+      }
+
+      const proposals: ProposedHotelStay[] = candidates.map((c) => ({
+        clientId: nextClientId(),
+        kind: "hotel_stay",
+        category: "stay",
+        tripId: null,
+        destination,
+        checkIn,
+        checkOut,
+        name: c.name,
+        price: c.price,
+        currency: c.currency,
+        rating: c.rating,
+        reviewCount: c.reviewCount,
+        bookingUrl: c.bookingUrl,
+      }));
+
+      return {
+        resultForModel: {
+          status: "proposed",
+          count: proposals.length,
+          message: `Proposed ${proposals.length} real, priced candidate(s) as cards — no need to restate their prices/ratings in your reply, just point the user at the panel.`,
+        },
+        proposals,
       };
     }
 
@@ -381,7 +498,7 @@ Be warm and plain-spoken, like a thoughtful friend helping someone plan, not a f
 
 You can propose a key date, a planned activity (date night / trip / anniversary-birthday), or a trip itinerary item — these show up for the user to review and confirm themselves; nothing you propose is saved automatically. You can also look up the user's saved favorite restaurants and hotels the user has actually enjoyed staying at (both read-only). Never invent a restaurant, hotel, rating, or review count that isn't in those results — if nothing matches, say so plainly instead of making something up. When a lookup comes back empty, don't explain the mechanics of why (no saved favorites, no Places results, missing API key) — just ask concisely for whatever's needed to search, in one short question (e.g. "What neighborhood, and what's a favorite kind of food?").
 
-For a trip specifically: first find out if it's tied to an event (anniversary, birthday, just a getaway) and roughly how many nights, then start with lodging — call search_hotels and propose a 'stay' itinerary item before filling in food and activities. Always pass the trip's destination as \`city\` to suggest_restaurant/search_hotels and as \`destination\` on propose_trip_itinerary_item (every item, not just the first) — otherwise searches default to the user's own home city instead of where the trip actually is. When you propose a specific restaurant or hotel, set restaurant_name / hotel_name on propose_trip_itinerary_item so it gets a real rating/link attached — don't just describe a place in your reply text without proposing it that way.
+For a trip specifically: first find out if it's tied to an event (anniversary, birthday, just a getaway) and roughly how many nights, then start with lodging. If you don't have exact check-in/check-out dates yet, use search_hotels for a quick, dateless look at options (places enjoyed before, or nearby favorites); once you have real dates, call propose_hotel_stay — it proposes several real, currently-priced hotel cards at once from Google Hotels, which the user picks from directly, rather than you choosing one to describe. Prefer propose_hotel_stay over describing a hotel in propose_trip_itinerary_item whenever you have dates, since it carries real pricing a generic itinerary item doesn't. Always pass the trip's destination as \`city\` to suggest_restaurant/search_hotels and as \`destination\` on propose_trip_itinerary_item (every item, not just the first) and propose_hotel_stay — otherwise searches default to the user's own home city instead of where the trip actually is. When you propose a specific restaurant, set restaurant_name on propose_trip_itinerary_item so it gets a real rating/link (or the user's own booking widget, if it matches a saved favorite) attached — don't just describe a place in your reply text without proposing it that way.
 
 Whenever the user tells you something about their partner's tastes in conversation — a favorite cuisine, a neighborhood they love, a hobby — call save_preference right away so it's remembered for next time, even if that's not what they were asking for. Don't wait to be asked.
 

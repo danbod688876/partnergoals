@@ -137,8 +137,12 @@ or the venue slug out of a Resy `/venues/...` link). The detail page
 (`/restaurants/[id]`) shows a reservation option built from that:
 
 - **OpenTable**, ID resolved (from a bare ID or parsed out of a pasted URL):
-  an embedded iframe of OpenTable's own reservation widget, plus a plain
-  "Open on OpenTable" link as a guaranteed fallback.
+  the real, current OpenTable Reservation Widget (`src/components/
+  OpenTableWidget.tsx`) — a `<script>` loader injected as a child of its
+  container div (verified against a real installed embed's source; no API
+  key or partner approval needed, any restaurant generates this from their
+  own OpenTable for Restaurants dashboard), plus a plain "Open on OpenTable"
+  link as a guaranteed fallback.
 - **Resy**, slug resolved (from a bare ID or parsed out of a pasted URL): an
   attempt at Resy's public button-widget embed, plus a fallback link to open
   the pasted URL (or search resy.com if only a bare ID was given).
@@ -151,11 +155,17 @@ or the venue slug out of a Resy `/venues/...` link). The detail page
 Nothing here ever books anything automatically — every path either embeds
 the platform's own official widget (so booking happens in their iframe, with
 their own login/payment flow) or link out to their page. No API keys,
-scraping, or stored credentials for either platform. (The exact widget embed
-syntax for OpenTable/Resy couldn't be verified against their live docs while
-building this — if a widget doesn't render, the fallback link next to it
-always works, and it's worth checking their current widget docs to update
+scraping, or stored credentials for either platform. (Resy's exact widget
+embed syntax couldn't be verified against their live docs while building
+this — if it doesn't render, the fallback link next to it always works, and
+it's worth checking Resy's current widget docs to update
 `src/components/BookingWidget.tsx` if needed.)
+
+The same `OpenTableWidget` shows up a second place: in the Planning Session,
+when the assistant proposes a restaurant stop whose name matches one of your
+saved favorites, the card gets the real booking widget (or, for Resy/other
+favorites, a link to that favorite's detail page) instead of a generic
+Places-based rating card — see below.
 
 The detail page also shows **"If [restaurant] doesn't work out"** — 3-5
 nearby, similarly-rated backups pulled from Google Places (Nearby Search +
@@ -205,24 +215,33 @@ still works. Multiple itinerary items proposed without an existing trip get
 grouped into one new trip automatically.
 
 For a trip, the assistant is steered to ask whether it's tied to an event and
-roughly how many nights, then lead with lodging: it calls a `search_hotels`
-tool (places you've actually enjoyed staying at first, via `/preferences`'s
-"Places you've enjoyed" list, falling back to a Google Places lodging search
-sorted by rating) before proposing a "stay" item. When it proposes a specific
-restaurant or hotel, the card gets a rating, a short description (Google's
-own editorial summary when it has one), a link to reserve/book, and a
-fitting emoji — looked up live via Google Places rather than invented; a
-"stay" card also gets a distinct accent border so it reads as lodging at a
-glance. The `suggest_restaurant` tool works the same way (favorites first,
-Places as fallback) for a plain "where should we eat" question that isn't
-part of a trip itinerary.
+roughly how many nights, then lead with lodging. Before it has real dates, it
+uses `search_hotels` for a dateless, price-free look at options (places
+you've actually enjoyed staying at first, via `/preferences`'s "Places
+you've enjoyed" list, falling back to a Google Places lodging search sorted
+by rating). Once it has check-in/check-out dates, it prefers
+`propose_hotel_stay` instead — this calls SerpApi's Google Hotels engine
+server-side (`src/lib/serpapi-hotels.ts`, `SERP_API_KEY`, never exposed to
+the client) and proposes the top few real, **currently-priced** candidates as
+their own cards (a dedicated `hotel_stay` table, distinct from a generic
+"stay" itinerary item) for you to pick from directly, rather than the
+assistant choosing one to describe. When it proposes a specific restaurant,
+the card gets a rating, a short description (Google's own editorial summary
+when it has one), a link to reserve, and a fitting emoji — looked up live via
+Google Places rather than invented — **unless** the name matches one of your
+saved favorites, in which case the card gets that favorite's real booking
+widget/link instead (OpenTable's widget, or a link to the favorite's detail
+page for Resy/other). Every "stay" card, whichever kind, gets a distinct
+accent border so lodging reads as lodging at a glance. The `suggest_restaurant`
+tool works the same favorites-first pattern for a plain "where should we eat"
+question that isn't part of a trip itinerary.
 
 Every trip-related tool call (`suggest_restaurant`, `search_hotels`,
-`propose_trip_itinerary_item`) takes an explicit destination — the model is
-told to always pass the trip's city, not assume the user's own. Without
-that, searches would quietly run against your home city (from `/profile`)
-even for a trip somewhere else, which is what the destination-aware search
-now specifically avoids.
+`propose_trip_itinerary_item`, `propose_hotel_stay`) takes an explicit
+destination — the model is told to always pass the trip's city, not assume
+the user's own. Without that, searches would quietly run against your home
+city (from `/profile`) even for a trip somewhere else, which is what the
+destination-aware search now specifically avoids.
 
 The assistant is also told about places you've enjoyed before (hotels,
 restaurants, cafes) and asked to reference them when relevant — a callback,
@@ -339,7 +358,10 @@ Activities, Restaurants, and Stores.
    Google Cloud API key with the Places API and Geocoding API enabled.
 7. (Optional, for the "paste your notes" onboarding path and the Planning
    Session chat) Set `ANTHROPIC_API_KEY` from https://console.anthropic.com.
-8. After the first deploy, run the migration against your production
+8. (Optional, for real-priced hotel proposals in the Planning Session) Set
+   `SERP_API_KEY` from https://serpapi.com. Without it, the assistant falls
+   back to Places-based lodging suggestions with no pricing.
+9. After the first deploy, run the migration against your production
    database once (e.g. `DATABASE_URL=... npm run db:migrate` from your
    machine, or via a Vercel deploy hook) and seed it:
 

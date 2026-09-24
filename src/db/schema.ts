@@ -222,6 +222,32 @@ export const tripItineraryItem = pgTable("trip_itinerary_item", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const hotelStayStatusEnum = pgEnum("hotel_stay_status", ["proposed", "confirmed"]);
+
+// A real, priced hotel candidate from SerpApi's Google Hotels engine,
+// proposed via the Planning Session's propose_hotel_stay tool. Distinct
+// from a generic "stay" trip_itinerary_item (Places-based, no price) —
+// this carries real pricing/booking data. Only ever written on confirm in
+// the current flow (nothing auto-saves from the tool call itself), so a row
+// existing here always means status = 'confirmed' today; the enum still
+// includes 'proposed' for a future pass that persists candidates directly.
+export const hotelStay = pgTable("hotel_stay", {
+  id: serial("id").primaryKey(),
+  tripId: integer("trip_id").references(() => trip.id, { onDelete: "cascade" }),
+  destination: text("destination").notNull(),
+  checkIn: date("check_in").notNull(),
+  checkOut: date("check_out").notNull(),
+  name: text("name").notNull(),
+  price: numeric("price", { precision: 10, scale: 2 }),
+  currency: text("currency"),
+  rating: numeric("rating", { precision: 2, scale: 1 }),
+  reviewCount: integer("review_count"),
+  bookingUrl: text("booking_url"),
+  source: text("source").notNull().default("serpapi"),
+  status: hotelStayStatusEnum("status").notNull().default("proposed"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Short-lived cache of Google Places "backup restaurant" results, keyed by
 // neighborhood+cuisine, so the same combo doesn't hit the Places API on
 // every page view. Read as stale after PLACES_BACKUP_CACHE_TTL_HOURS (see

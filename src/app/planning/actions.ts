@@ -3,7 +3,7 @@
 import { desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { plan, planItem, planMessage } from "@/db/schema";
+import { hotelStay, plan, planItem, planMessage } from "@/db/schema";
 
 export type DraftPlanSummary = { id: number; name: string; updatedAt: string };
 
@@ -78,4 +78,50 @@ export async function renamePlan(planId: number, name: string): Promise<void> {
   if (!trimmed) return;
   await db.update(plan).set({ name: trimmed, updatedAt: new Date() }).where(eq(plan.id, planId));
   revalidatePath("/planning");
+}
+
+// --- HotelStay confirm actions ---
+// Nothing about a proposed hotel stay is written to hotel_stay until the
+// user confirms it — the proposal only ever lives in plan_item until then,
+// same as every other propose_* type.
+
+export async function confirmHotelStay(item: {
+  tripId: number | null;
+  destination: string;
+  checkIn: string;
+  checkOut: string;
+  name: string;
+  price: number | null;
+  currency: string | null;
+  rating: number | null;
+  reviewCount: number | null;
+  bookingUrl: string | null;
+}): Promise<{ id: number }> {
+  const [row] = await db
+    .insert(hotelStay)
+    .values({
+      tripId: item.tripId,
+      destination: item.destination,
+      checkIn: item.checkIn,
+      checkOut: item.checkOut,
+      name: item.name,
+      price: item.price != null ? String(item.price) : null,
+      currency: item.currency,
+      rating: item.rating != null ? String(item.rating) : null,
+      reviewCount: item.reviewCount,
+      bookingUrl: item.bookingUrl,
+      status: "confirmed",
+    })
+    .returning({ id: hotelStay.id });
+
+  revalidatePath("/upcoming");
+  return row;
+}
+
+export async function updateConfirmedHotelStay(
+  id: number,
+  patch: { checkIn: string; checkOut: string; name: string }
+): Promise<void> {
+  await db.update(hotelStay).set(patch).where(eq(hotelStay.id, id));
+  revalidatePath("/upcoming");
 }
